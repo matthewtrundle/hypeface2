@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+prisma/migrations/dev/
+
+# Turbo
+.turbo/
+
+# Misc
+.cache/
+tmp/
+temp/
+
+# IMPORTANT: Never commit these
+private-keys/
+wallets/
+*.key
+*.pem
+seed.txt
+mnemonic.txt

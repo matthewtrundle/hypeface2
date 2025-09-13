@@ -1,0 +1,42 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "npm install && npm run build:all"
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "startCommand": "npm run start:prod",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30
+  },
+  "services": [
+    {
+      "name": "api",
+      "source": "apps/api",
+      "builder": "NIXPACKS",
+      "buildCommand": "cd apps/api && npm ci && npx prisma generate && npm run build",
+      "startCommand": "cd apps/api && npx prisma migrate deploy && npm run start",
+      "healthcheckPath": "/health",
+      "domains": ["${{RAILWAY_STATIC_URL}}"],
+      "envVars": {
+        "PORT": "3001",
+        "NODE_ENV": "production"
+      }
+    },
+    {
+      "name": "dashboard",
+      "source": "apps/dashboard",
+      "builder": "NIXPACKS",
+      "buildCommand": "cd apps/dashboard && npm ci && npm run build",
+      "startCommand": "cd apps/dashboard && npm run start",
+      "domains": ["${{RAILWAY_STATIC_URL}}"],
+      "envVars": {
+        "PORT": "3000",
+        "NODE_ENV": "production"
+      }
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  wallets   Wallet[]
+  positions Position[]
+  trades    Trade[]
+  signals   Signal[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id                  String  @id @default(uuid())
+  userId              String  @map("user_id")
+  name                String
+  publicKey           String  @map("public_key")
+  encryptedPrivateKey String  @map("encrypted_private_key")
+  isTestnet           Boolean @default(false) @map("is_testnet")
+  isActive            Boolean @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  user      User       @relation(fields: [userId], references: [id])
+  positions Position[]
+
+  @@map("wallets")
+}
+
+model Signal {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  action      String    // 'buy' | 'sell'
+  symbol      String
+  strategy    String?
+  metadata    Json?
+  processedAt DateTime? @map("processed_at")
+  status      String    @default("pending") // 'pending' | 'processed' | 'failed'
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id])
+  trades Trade[]
+
+  @@map("signals")
+}
+
+model Position {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  walletId      String    @map("wallet_id")
+  symbol        String
+  side          String    // 'long' | 'short'
+  size          Decimal   @db.Decimal(18, 8)
+  entryPrice    Decimal   @map("entry_price") @db.Decimal(18, 8)
+  currentPrice  Decimal?  @map("current_price") @db.Decimal(18, 8)
+  unrealizedPnl Decimal   @default(0) @map("unrealized_pnl") @db.Decimal(18, 8)
+  realizedPnl   Decimal   @default(0) @map("realized_pnl") @db.Decimal(18, 8)
+  status        String    @default("open") // 'open' | 'closed'
+  openedAt      DateTime  @default(now()) @map("opened_at")
+  closedAt      DateTime? @map("closed_at")
+
+  user   User     @relation(fields: [userId], references: [id])
+  wallet Wallet   @relation(fields: [walletId], references: [id])
+  trades Trade[]
+
+  @@index([userId, status])
+  @@map("positions")
+}
+
+model Trade {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  positionId         String?  @map("position_id")
+  signalId           String?  @map("signal_id")
+  symbol             String
+  side               String   // 'buy' | 'sell'
+  type               String   // 'market' | 'limit'
+  size               Decimal  @db.Decimal(18, 8)
+  price              Decimal  @db.Decimal(18, 8)
+  fee                Decimal  @default(0) @db.Decimal(18, 8)
+  hyperliquidOrderId String?  @map("hyperliquid_order_id")
+  status             String   @default("pending") // 'pending' | 'executed' | 'failed' | 'cancelled'
+  executedAt         DateTime @default(now()) @map("executed_at")
+
+  user     User      @relation(fields: [userId], references: [id])
+  position Position? @relation(fields: [positionId], references: [id])
+  signal   Signal?   @relation(fields: [signalId], references: [id])
+
+  @@index([userId, symbol])
+  @@map("trades")
+}
+
+model SystemLog {
+  id        String   @id @default(uuid())
+  level     String   // 'info' | 'warn' | 'error'
+  message   String   @db.Text
+  component String?
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([level, createdAt])
+  @@map("system_logs")
+}

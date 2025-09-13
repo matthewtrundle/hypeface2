@@ -1,0 +1,17 @@
+[phases.setup]
+nixPkgs = ["nodejs-20_x", "npm-9_x"]
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = [
+  "npx prisma generate --schema=apps/api/prisma/schema.prisma",
+  "npm run build:all"
+]
+
+[start]
+cmd = "npm run start:prod"
+
+[variables]
+NODE_ENV = "production"
