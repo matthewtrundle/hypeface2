@@ -8,7 +8,29 @@ import Redis from 'ioredis';
 import { logger } from './lib/logger';
 
 const prisma = new PrismaClient();
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+
+// Initialize Redis with better error handling
+let redis = null;
+try {
+  // Use fallback to localhost if REDIS_URL is not available or invalid
+  const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  redis = new Redis(redisUrl, {
+    maxRetriesPerRequest: 3,
+    retryStrategy: (times) => {
+      if (times > 3) {
+        logger.warn('Redis connection failed, continuing without Redis');
+        return null; // Stop retrying
+      }
+      return Math.min(times * 100, 3000);
+    },
+    reconnectOnError: (err) => {
+      logger.error('Redis reconnection error:', err.message);
+      return false;
+    }
+  });
+} catch (error) {
+  logger.warn('Redis initialization failed, continuing without Redis');
+}
 
 const app = Fastify({
   logger: false, // We use winston for logging
@@ -20,9 +42,16 @@ async function main() {
     await prisma.$connect();
     logger.info('Database connected successfully');
 
-    // Test Redis connection
-    await redis.ping();
-    logger.info('Redis connected successfully');
+    // Test Redis connection (optional)
+    if (redis) {
+      try {
+        await redis.ping();
+        logger.info('Redis connected successfully');
+      } catch (error) {
+        logger.warn('Redis ping failed, continuing without Redis:', error.message);
+        redis = null; // Disable Redis if not available
+      }
+    }
 
     // Register plugins
     await app.register(cors, {
@@ -75,11 +104,12 @@ async function main() {
         .then(() => true)
         .catch(() => false);
 
-      const redisConnected = await redis.ping()
+      const redisConnected = redis ? await redis.ping()
         .then(() => true)
-        .catch(() => false);
+        .catch(() => false) : false;
 
-      const status = dbConnected && redisConnected ? 'healthy' : 'degraded';
+      // Consider healthy if database is connected (Redis is optional)
+      const status = dbConnected ? 'healthy' : 'unhealthy';
 
       return {
         status,
