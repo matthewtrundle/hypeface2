@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "build:all": "cd apps/api && npm run build && cd ../dashboard && npm run build",
+    "build:all": "echo 'Skipping build for deployment'",
     "start": "turbo run start",
     "start:prod": "cd apps/api && npm run start",
     "lint": "turbo run lint",
