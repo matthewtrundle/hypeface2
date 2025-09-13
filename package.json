@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "build:all": "npm install && turbo run build",
+    "build:all": "cd apps/api && npm run build && cd ../dashboard && npm run build",
     "start": "turbo run start",
     "start:prod": "cd apps/api && npm run start",
     "lint": "turbo run lint",
