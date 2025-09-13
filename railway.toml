@@ -1,6 +1,5 @@
 [build]
 builder = "NIXPACKS"
-watchPatterns = ["apps/**", "packages/**"]
 
 [deploy]
 startCommand = "npm run start:prod"
@@ -8,6 +7,8 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
 healthcheckTimeout = 30
+
+[environments.production]
 region = "eu-west1"  # Amsterdam - No Hyperliquid restrictions
 
 [build.environment]
