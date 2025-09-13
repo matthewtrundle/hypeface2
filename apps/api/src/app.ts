@@ -155,3 +155,5 @@ declare module 'fastify' {
 }
 
 main();
+
+export { app };
