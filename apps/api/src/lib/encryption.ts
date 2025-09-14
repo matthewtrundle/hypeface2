@@ -30,12 +30,12 @@ export const decrypt = (encryptedText: string): string => {
 
 export const hashPassword = async (password: string): Promise<string> => {
   const bcrypt = await import('bcryptjs');
-  return bcrypt.hash(password, 10);
+  return bcrypt.default.hash(password, 10);
 };
 
 export const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
   const bcrypt = await import('bcryptjs');
-  return bcrypt.compare(password, hash);
+  return bcrypt.default.compare(password, hash);
 };
 
 export const generateWebhookSignature = (payload: string, secret: string): string => {
