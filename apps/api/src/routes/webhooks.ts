@@ -3,11 +3,15 @@ import Joi from 'joi';
 import { verifyWebhookSignature } from '../lib/encryption';
 import { logger } from '../lib/logger';
 import { TradingSignal, WebhookPayload } from '../types';
+import { PyramidTradingEngine } from '../services/pyramid-trading-engine';
 
 const webhookSchema = Joi.object({
   action: Joi.string().valid('buy', 'sell').required(),
   symbol: Joi.string().required(),
+  price: Joi.number().required(),
   strategy: Joi.string().optional(),
+  confidence: Joi.number().optional(),
+  leverage: Joi.number().optional(),
   timestamp: Joi.number().optional(),
   metadata: Joi.object().optional(),
 });
@@ -89,8 +93,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         metadata: value.metadata,
       };
 
-      // TODO: Get user ID from webhook or use default user
-      // For now, we'll use a placeholder approach
+      // Get user ID from webhook or use default user
       const userId = await getUserIdFromWebhook(fastify, payload);
 
       if (!userId) {
@@ -112,25 +115,36 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         },
       });
 
-      // Queue signal for processing
-      await fastify.redis.rpush(
-        'trading_signals',
-        JSON.stringify({
-          signal: { ...signal, id: savedSignal.id },
-          userId,
-        })
+      // Process signal immediately with PyramidTradingEngine
+      const pyramidEngine = new PyramidTradingEngine(
+        fastify.prisma,
+        fastify.redis,
+        fastify.wsService
       );
 
-      logger.info('Signal queued for processing', {
+      // Process the signal with pyramid strategy
+      await pyramidEngine.processSignal(
+        { ...signal, id: savedSignal.id, price: value.price },
+        userId
+      );
+
+      // Update signal status
+      await fastify.prisma.signal.update({
+        where: { id: savedSignal.id },
+        data: { status: 'processed', processedAt: new Date() }
+      });
+
+      logger.info('Signal processed with pyramid strategy', {
         signalId: savedSignal.id,
         action: signal.action,
         symbol: signal.symbol,
+        price: value.price
       });
 
       return reply.status(200).send({
         success: true,
         signalId: savedSignal.id,
-        message: 'Signal received and queued for processing',
+        message: 'Signal processed with pyramid strategy',
       });
 
     } catch (error: any) {
@@ -190,16 +204,25 @@ export async function webhookRoutes(fastify: FastifyInstance) {
           },
         });
 
-        // Queue signal for processing
-        await fastify.redis.rpush(
-          'trading_signals',
-          JSON.stringify({
-            signal: { ...signal, id: savedSignal.id },
-            userId: testUser.id,
-          })
+        // Process test signal with PyramidTradingEngine
+        const pyramidEngine = new PyramidTradingEngine(
+          fastify.prisma,
+          fastify.redis,
+          fastify.wsService
         );
 
-        logger.info('Test signal queued', {
+        await pyramidEngine.processSignal(
+          { ...signal, id: savedSignal.id, price: value.price },
+          testUser.id
+        );
+
+        // Update signal status
+        await fastify.prisma.signal.update({
+          where: { id: savedSignal.id },
+          data: { status: 'processed', processedAt: new Date() }
+        });
+
+        logger.info('Test signal processed with pyramid', {
           signalId: savedSignal.id,
           action: signal.action,
           symbol: signal.symbol,
@@ -208,7 +231,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         return reply.status(200).send({
           success: true,
           signalId: savedSignal.id,
-          message: 'Test signal queued for processing',
+          message: 'Test signal processed with pyramid strategy',
           testMode: true,
         });
 

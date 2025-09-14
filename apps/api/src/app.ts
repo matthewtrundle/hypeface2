@@ -73,7 +73,7 @@ async function main() {
     const { authRoutes } = await import('./routes/auth');
     const { dashboardRoutes } = await import('./routes/dashboard');
     const { webhookRoutes } = await import('./routes/webhooks');
-    const { TradingEngine } = await import('./services/trading-engine');
+    const { PyramidTradingEngine } = await import('./services/pyramid-trading-engine');
     const { WebSocketService } = await import('./services/websocket');
     const { Server } = await import('socket.io');
     const { createServer } = await import('http');
@@ -93,10 +93,23 @@ async function main() {
     });
 
     const wsService = new WebSocketService(io, prisma);
-    const tradingEngine = new TradingEngine(prisma, redis, wsService);
+    app.decorate('wsService', wsService);
 
-    // Start trading engine
-    await tradingEngine.start();
+    // Use PyramidTradingEngine if pyramiding is enabled
+    const enablePyramiding = process.env.ENABLE_PYRAMIDING === 'true';
+
+    if (enablePyramiding) {
+      const pyramidEngine = new PyramidTradingEngine(prisma, redis, wsService);
+      await pyramidEngine.start();
+      app.decorate('pyramidEngine', pyramidEngine);
+      logger.info('Pyramid trading engine started');
+    } else {
+      const { TradingEngine } = await import('./services/trading-engine');
+      const tradingEngine = new TradingEngine(prisma, redis, wsService);
+      await tradingEngine.start();
+      app.decorate('tradingEngine', tradingEngine);
+      logger.info('Standard trading engine started');
+    }
 
     // Health check endpoint
     app.get('/health', async () => {

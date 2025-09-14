@@ -70,6 +70,8 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       const dashboardData: DashboardData = {
         positions: positions.map(p => ({
           ...p,
+          side: p.side as 'long' | 'short',
+          status: p.status as 'open' | 'closed',
           size: p.size.toNumber(),
           entryPrice: p.entryPrice.toNumber(),
           currentPrice: p.currentPrice?.toNumber(),
@@ -78,6 +80,9 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         })),
         trades: trades.map(t => ({
           ...t,
+          side: t.side as 'buy' | 'sell',
+          type: t.type as 'market' | 'limit',
+          status: t.status as 'pending' | 'executed' | 'failed' | 'cancelled',
           size: t.size.toNumber(),
           price: t.price.toNumber(),
           fee: t.fee.toNumber(),

@@ -4,6 +4,7 @@ export interface TradingSignal {
   id?: string;
   action: 'buy' | 'sell';
   symbol: string;
+  price?: number;
   timestamp: number;
   strategy?: string;
   metadata?: Record<string, any>;
@@ -72,8 +73,12 @@ export interface SystemStatus {
 export interface WebhookPayload {
   action: 'buy' | 'sell';
   symbol: string;
+  price?: number;
   strategy?: string;
+  confidence?: number;
+  leverage?: number;
   timestamp?: number;
+  metadata?: Record<string, any>;
   [key: string]: any;
 }
 
