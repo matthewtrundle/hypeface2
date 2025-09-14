@@ -7,9 +7,8 @@ import { Activity } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('hyperliquid2024');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -19,14 +18,10 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      if (isLogin) {
-        await api.login(email, password);
-      } else {
-        await api.register(email, password);
-      }
+      await api.login(username, password);
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'An error occurred');
+      setError(err.response?.data?.error || 'Invalid credentials');
     } finally {
       setIsLoading(false);
     }
@@ -40,35 +35,29 @@ export default function LoginPage() {
             <Activity className="h-12 w-12 text-blue-600" />
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            {isLogin ? 'Sign in to your account' : 'Create a new account'}
+            Hyperliquid Trading Bot
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            {isLogin ? "Don't have an account? " : 'Already have an account? '}
-            <button
-              onClick={() => setIsLogin(!isLogin)}
-              className="font-medium text-blue-600 hover:text-blue-500"
-            >
-              {isLogin ? 'Sign up' : 'Sign in'}
-            </button>
+            Sign in to access your trading dashboard
           </p>
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="email" className="sr-only">
-                Email address
+              <label htmlFor="username" className="sr-only">
+                Username
               </label>
               <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
+                id="username"
+                name="username"
+                type="text"
+                autoComplete="username"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
+                placeholder="Username"
               />
             </div>
             <div>
@@ -85,7 +74,6 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Password"
-                minLength={8}
               />
             </div>
           </div>
@@ -102,17 +90,20 @@ export default function LoginPage() {
               disabled={isLoading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              {isLoading ? 'Loading...' : isLogin ? 'Sign in' : 'Sign up'}
+              {isLoading ? 'Signing in...' : 'Sign in'}
             </button>
           </div>
 
-          {isLogin && (
-            <div className="text-sm text-center text-gray-600">
-              <p>Demo credentials:</p>
-              <p>Email: test@example.com</p>
-              <p>Password: testpassword</p>
+          <div className="bg-blue-50 rounded-md p-4">
+            <div className="text-sm text-center text-blue-800">
+              <p className="font-medium">Default credentials:</p>
+              <p className="mt-1">Username: <code className="bg-blue-100 px-2 py-1 rounded">admin</code></p>
+              <p>Password: <code className="bg-blue-100 px-2 py-1 rounded">hyperliquid2024</code></p>
+              <p className="mt-2 text-xs text-blue-600">
+                You can change these in your environment variables
+              </p>
             </div>
-          )}
+          </div>
         </form>
       </div>
     </div>
