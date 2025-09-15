@@ -220,6 +220,15 @@ async function main() {
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     logger.info(`Hyperliquid API: ${process.env.HYPERLIQUID_API_URL || 'Not configured'}`);
 
+    // Debug environment variables
+    logger.info('=== DEPLOYMENT CHECK v3.0 ===');
+    const walletKeys = Object.keys(process.env).filter(k => k.includes('WALLET'));
+    logger.info(`Wallet-related env vars found: ${walletKeys.length > 0 ? walletKeys.join(', ') : 'NONE'}`);
+    logger.info(`WALLET_PRIVATE_KEY exists: ${!!process.env.WALLET_PRIVATE_KEY}`);
+    if (process.env.WALLET_PRIVATE_KEY) {
+      logger.info(`Key length: ${process.env.WALLET_PRIVATE_KEY.length} chars`);
+    }
+
   } catch (err) {
     logger.error('Failed to start server', err);
     process.exit(1);
