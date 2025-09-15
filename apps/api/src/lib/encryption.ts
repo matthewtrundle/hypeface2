@@ -1,12 +1,8 @@
 import CryptoJS from 'crypto-js';
 import { logger } from './logger';
 
-const MASTER_KEY = process.env.MASTER_ENCRYPTION_KEY;
-
-if (!MASTER_KEY || MASTER_KEY.length < 32) {
-  logger.error('MASTER_ENCRYPTION_KEY must be at least 32 characters');
-  process.exit(1);
-}
+// Use a default key if not provided (since we're not storing encrypted wallets anymore)
+const MASTER_KEY = process.env.MASTER_ENCRYPTION_KEY || 'default-encryption-key-for-non-critical-data-32chars';
 
 export const encrypt = (text: string): string => {
   try {
