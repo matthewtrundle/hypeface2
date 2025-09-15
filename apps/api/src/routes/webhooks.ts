@@ -54,24 +54,17 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Verify signature
+      // Simple secret check for TradingView (which can't do signatures)
       const webhookSecret = process.env.WEBHOOK_SECRET;
-      if (webhookSecret && signature) {
-        const payloadString = JSON.stringify(payload);
-        const isValid = verifyWebhookSignature(payloadString, signature, webhookSecret);
+      const urlSecret = (request.query as any).secret;
 
-        if (!isValid) {
-          logger.warn('Invalid webhook signature');
+      if (webhookSecret) {
+        if (urlSecret !== webhookSecret) {
+          logger.warn('Invalid webhook secret');
           return reply.status(401).send({
-            error: 'Invalid signature',
+            error: 'Invalid secret',
           });
         }
-      } else if (process.env.NODE_ENV === 'production' && webhookSecret) {
-        // Only require signature if WEBHOOK_SECRET is set
-        logger.warn('Missing webhook signature in production');
-        return reply.status(401).send({
-          error: 'Signature required',
-        });
       }
 
       // Validate webhook payload
