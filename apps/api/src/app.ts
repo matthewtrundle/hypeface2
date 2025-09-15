@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
+// Deployment trigger: Fixed MASTER_ENCRYPTION_KEY requirement
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
