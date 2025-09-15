@@ -77,9 +77,11 @@ export class HyperliquidClient {
     }
 
     try {
-      const userState = await this.client.info.getUserState(this.wallet!.address);
+      const clearinghouseState = await this.client.info.clearinghouseState({
+        user: this.wallet!.address,
+      });
 
-      const accountValue = parseFloat(userState.marginSummary.accountValue);
+      const accountValue = parseFloat(clearinghouseState.marginSummary.accountValue);
       return accountValue;
     } catch (error: any) {
       logger.error('Failed to get account value', { error: error.message });
@@ -93,9 +95,11 @@ export class HyperliquidClient {
     }
 
     try {
-      const userState = await this.client.info.getUserState(this.wallet!.address);
+      const clearinghouseState = await this.client.info.clearinghouseState({
+        user: this.wallet!.address,
+      });
 
-      return userState.assetPositions.map((pos: any) => ({
+      return clearinghouseState.assetPositions.map((pos: any) => ({
         coin: pos.position.coin,
         szi: pos.position.szi,
         entryPx: pos.position.entryPx,
