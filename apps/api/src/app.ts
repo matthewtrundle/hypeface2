@@ -100,6 +100,13 @@ async function main() {
     const { HyperliquidClient } = await import('./services/hyperliquid-client');
     let hyperliquidClient = null;
 
+    // Debug: Log wallet key status
+    logger.info('Wallet private key check', {
+      hasKey: !!process.env.WALLET_PRIVATE_KEY,
+      keyLength: process.env.WALLET_PRIVATE_KEY?.length || 0,
+      firstChars: process.env.WALLET_PRIVATE_KEY?.substring(0, 4) || 'none'
+    });
+
     if (process.env.WALLET_PRIVATE_KEY && process.env.WALLET_PRIVATE_KEY !== 'encrypted-private-key-placeholder') {
       hyperliquidClient = new HyperliquidClient({
         privateKey: process.env.WALLET_PRIVATE_KEY,
