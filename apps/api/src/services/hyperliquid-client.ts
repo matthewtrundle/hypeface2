@@ -120,18 +120,21 @@ export class HyperliquidClient {
     }
 
     try {
-      const orderType = order.order_type === 'market'
-        ? { market: {} }
-        : { limit: { tif: 'Gtc' } };
-
-      const result = await this.client.exchange.placeOrder({
+      // Workaround for SDK bug with null limit_px
+      const orderParams: any = {
         coin: order.coin,
         is_buy: order.is_buy,
         sz: order.sz,
-        limit_px: order.limit_px || null,
-        order_type: orderType,
+        order_type: order.order_type === 'market' ? { market: {} } : { limit: { tif: 'Gtc' } },
         reduce_only: order.reduce_only || false,
-      });
+      };
+
+      // Only add limit_px if it's provided and not a market order
+      if (order.order_type === 'limit' && order.limit_px) {
+        orderParams.limit_px = order.limit_px;
+      }
+
+      const result = await this.client.exchange.placeOrder(orderParams);
 
       logger.info('Order placed', { order, result });
 

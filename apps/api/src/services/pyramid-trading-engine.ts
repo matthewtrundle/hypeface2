@@ -200,13 +200,12 @@ export class PyramidTradingEngine {
       entryPercentage
     });
 
-    // Place the order on Hyperliquid
+    // Place the order on Hyperliquid (use market order for better execution)
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
       is_buy: true,
       sz: sizeInAsset,
-      limit_px: currentPrice * 1.001, // Slight slippage tolerance
-      order_type: 'limit',
+      order_type: 'market',
       reduce_only: false
     };
 
@@ -539,6 +538,36 @@ export class PyramidTradingEngine {
     } catch (error) {
       logger.error(`Error closing position ${position.id}`, error);
     }
+  }
+
+  /**
+   * Get current pyramid states
+   */
+  public getStates(): Map<string, PyramidState> {
+    return this.pyramidStates;
+  }
+
+  /**
+   * Get pyramid configuration
+   */
+  public getConfig(): PyramidConfig {
+    return this.config;
+  }
+
+  /**
+   * Reset state for specific symbol
+   */
+  public resetSymbol(symbol: string): void {
+    this.pyramidStates.delete(symbol);
+    logger.info(`Pyramid state reset for ${symbol}`);
+  }
+
+  /**
+   * Reset all pyramid states
+   */
+  public resetAll(): void {
+    this.pyramidStates.clear();
+    logger.info('All pyramid states reset');
   }
 
   /**

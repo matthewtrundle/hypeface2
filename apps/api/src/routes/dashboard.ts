@@ -4,6 +4,7 @@ import { JWTPayload, DashboardData, SystemStatus } from '../types';
 import { WalletManager } from '../services/wallet-manager';
 import { HyperliquidService } from '../services/hyperliquid-client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { PyramidTradingEngine } from '../services/pyramid-trading-engine';
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
   const walletManager = new WalletManager(fastify.prisma);
@@ -359,4 +360,70 @@ async function getSystemStatus(fastify: FastifyInstance): Promise<SystemStatus> 
     databaseConnection: dbConnected,
     redisConnection: redisConnected,
   };
+}
+
+  // Pyramid status endpoint
+  fastify.get('/pyramid/status', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const pyramidEngine = (fastify as any).pyramidEngine;
+
+      if (!pyramidEngine) {
+        return reply.status(503).send({
+          error: 'Pyramid engine not available'
+        });
+      }
+
+      // Get pyramid states
+      const states = pyramidEngine.getStates();
+
+      return reply.status(200).send({
+        enabled: true,
+        config: pyramidEngine.getConfig(),
+        states: Object.fromEntries(states),
+        timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      logger.error('Error getting pyramid status', { error: error.message });
+      return reply.status(500).send({
+        error: 'Failed to get pyramid status'
+      });
+    }
+  });
+
+  // Reset pyramid state endpoint
+  fastify.post('/pyramid/reset', async (request: FastifyRequest<{
+    Body: { symbol?: string }
+  }>, reply: FastifyReply) => {
+    try {
+      const { symbol } = request.body;
+      const pyramidEngine = (fastify as any).pyramidEngine;
+
+      if (!pyramidEngine) {
+        return reply.status(503).send({
+          error: 'Pyramid engine not available'
+        });
+      }
+
+      if (symbol) {
+        // Reset specific symbol
+        pyramidEngine.resetSymbol(symbol);
+        logger.info(`Pyramid state reset for ${symbol}`);
+      } else {
+        // Reset all states
+        pyramidEngine.resetAll();
+        logger.info('All pyramid states reset');
+      }
+
+      return reply.status(200).send({
+        success: true,
+        message: symbol ? `State reset for ${symbol}` : 'All states reset',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      logger.error('Error resetting pyramid state', { error: error.message });
+      return reply.status(500).send({
+        error: 'Failed to reset pyramid state'
+      });
+    }
+  });
 }
