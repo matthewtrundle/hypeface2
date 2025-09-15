@@ -56,7 +56,7 @@ export class PyramidTradingEngine {
     this.config = {
       entryPercentages: (process.env.PYRAMID_ENTRY_PERCENTAGES || '40,30,20,10').split(',').map(Number),
       exitPercentages: (process.env.PYRAMID_EXIT_PERCENTAGES || '40,30,20,10').split(',').map(Number),
-      leverageLevels: (process.env.PYRAMID_LEVERAGE_LEVELS || '3,4,5,5').split(',').map(Number),
+      leverageLevels: (process.env.PYRAMID_LEVERAGE_LEVELS || '10,8,6,4').split(',').map(Number),
       maxPyramidLevels: parseInt(process.env.MAX_PYRAMID_LEVELS || '4'),
       stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || '10'),
       trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || '5'),
