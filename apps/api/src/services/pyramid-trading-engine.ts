@@ -93,9 +93,22 @@ export class PyramidTradingEngine {
       return this.hyperliquidClient;
     }
 
+    // Try to use wallet from environment variable first
+    const envPrivateKey = process.env.WALLET_PRIVATE_KEY || process.env.FALLBACK_WALLET_KEY;
+    if (envPrivateKey && envPrivateKey !== 'encrypted-private-key-placeholder') {
+      this.hyperliquidClient = new HyperliquidClient({
+        privateKey: envPrivateKey,
+        isTestnet: process.env.HYPERLIQUID_API_URL?.includes('testnet') || false
+      });
+
+      await this.hyperliquidClient.initialize();
+      return this.hyperliquidClient;
+    }
+
+    // Fallback to database wallet (old system)
     const wallet = await this.walletManager.getActiveWallet(userId);
     if (!wallet) {
-      throw new Error('No active wallet found for user');
+      throw new Error('No active wallet found for user or environment');
     }
 
     const decryptedPrivateKey = await this.walletManager.getDecryptedPrivateKey(

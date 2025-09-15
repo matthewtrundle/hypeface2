@@ -100,16 +100,20 @@ async function main() {
     const { HyperliquidClient } = await import('./services/hyperliquid-client');
     let hyperliquidClient = null;
 
+    // TEMPORARY: Use fallback key if env var not available
+    const walletKey = process.env.WALLET_PRIVATE_KEY || process.env.FALLBACK_WALLET_KEY;
+
     // Debug: Log wallet key status
     logger.info('Wallet private key check', {
-      hasKey: !!process.env.WALLET_PRIVATE_KEY,
-      keyLength: process.env.WALLET_PRIVATE_KEY?.length || 0,
-      firstChars: process.env.WALLET_PRIVATE_KEY?.substring(0, 4) || 'none'
+      hasKey: !!walletKey,
+      keyLength: walletKey?.length || 0,
+      firstChars: walletKey?.substring(0, 4) || 'none',
+      source: process.env.WALLET_PRIVATE_KEY ? 'env' : 'fallback'
     });
 
-    if (process.env.WALLET_PRIVATE_KEY && process.env.WALLET_PRIVATE_KEY !== 'encrypted-private-key-placeholder') {
+    if (walletKey && walletKey !== 'encrypted-private-key-placeholder') {
       hyperliquidClient = new HyperliquidClient({
-        privateKey: process.env.WALLET_PRIVATE_KEY,
+        privateKey: walletKey,
         isTestnet: process.env.HYPERLIQUID_API_URL?.includes('testnet') || false
       });
 
