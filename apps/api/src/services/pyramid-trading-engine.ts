@@ -3,7 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import Redis from 'ioredis';
 import { logger } from '../lib/logger';
 import { TradingSignal } from '../types';
-import { HyperliquidService, OrderRequest, PositionInfo } from './hyperliquid-client';
+import { HyperliquidClient, OrderRequest, Position as HLPosition } from './hyperliquid-client';
 import { WalletManager } from './wallet-manager';
 import { WebSocketService } from './websocket';
 
@@ -40,7 +40,7 @@ interface PyramidState {
 
 export class PyramidTradingEngine {
   private isProcessing = false;
-  private hyperliquidService: HyperliquidService | null = null;
+  private hyperliquidClient: HyperliquidClient | null = null;
   private walletManager: WalletManager;
   private config: PyramidConfig;
   private pyramidStates: Map<string, PyramidState> = new Map();
@@ -82,7 +82,17 @@ export class PyramidTradingEngine {
     logger.info('Pyramid trading engine started');
   }
 
-  async initializeHyperliquid(userId: string): Promise<HyperliquidService> {
+  setHyperliquidClient(client: HyperliquidClient) {
+    this.hyperliquidClient = client;
+    logger.info('Hyperliquid client set for pyramid engine');
+  }
+
+  async initializeHyperliquid(userId: string): Promise<HyperliquidClient> {
+    // If client is already set from app.ts, use it
+    if (this.hyperliquidClient) {
+      return this.hyperliquidClient;
+    }
+
     const wallet = await this.walletManager.getActiveWallet(userId);
     if (!wallet) {
       throw new Error('No active wallet found for user');
@@ -93,15 +103,13 @@ export class PyramidTradingEngine {
       userId
     );
 
-    this.hyperliquidService = new HyperliquidService({
-      apiUrl: wallet.isTestnet
-        ? process.env.HYPERLIQUID_API_URL || 'https://api.hyperliquid-testnet.xyz'
-        : process.env.HYPERLIQUID_MAINNET_URL || 'https://api.hyperliquid.xyz',
+    this.hyperliquidClient = new HyperliquidClient({
       privateKey: decryptedPrivateKey,
       isTestnet: wallet.isTestnet
     });
 
-    return this.hyperliquidService;
+    await this.hyperliquidClient.initialize();
+    return this.hyperliquidClient;
   }
 
   /**
@@ -112,7 +120,7 @@ export class PyramidTradingEngine {
       logger.info('Processing signal with pyramid logic', { signal });
 
       // Initialize Hyperliquid if needed
-      if (!this.hyperliquidService) {
+      if (!this.hyperliquidClient) {
         await this.initializeHyperliquid(userId);
       }
 
@@ -161,13 +169,13 @@ export class PyramidTradingEngine {
     const wallet = await this.walletManager.getActiveWallet(userId);
     if (!wallet) throw new Error('No active wallet');
 
-    const balanceInfo = await this.hyperliquidService!.getBalance();
+    const accountValue = await this.hyperliquidClient!.getAccountValue();
 
     // Calculate position size for this pyramid level
     const entryPercentage = this.config.entryPercentages[state.entryCount];
     const leverage = this.config.leverageLevels[state.entryCount];
-    const positionSize = balanceInfo.available * (entryPercentage / 100);
-    const currentPrice = signal.price || await this.hyperliquidService!.getCurrentPrice(signal.symbol);
+    const positionSize = accountValue * (entryPercentage / 100);
+    const currentPrice = signal.price || await this.hyperliquidClient!.getMarketPrice(signal.symbol);
     const sizeInAsset = positionSize / currentPrice;
 
     logger.info(`Adding pyramid level ${state.entryCount + 1}`, {
@@ -180,14 +188,14 @@ export class PyramidTradingEngine {
     // Place the order on Hyperliquid
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
-      isBuy: true,
-      size: sizeInAsset,
-      limitPrice: currentPrice * 1.001, // Slight slippage tolerance
-      orderType: 'limit',
-      reduceOnly: false
+      is_buy: true,
+      sz: sizeInAsset,
+      limit_px: currentPrice * 1.001, // Slight slippage tolerance
+      order_type: 'limit',
+      reduce_only: false
     };
 
-    const orderResult = await this.hyperliquidService!.placeOrder(orderRequest);
+    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
 
     // Update pyramid state
     const newPosition = {

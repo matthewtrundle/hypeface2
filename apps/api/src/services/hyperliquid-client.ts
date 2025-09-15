@@ -1,326 +1,232 @@
+import { Hyperliquid } from 'hyperliquid';
 import { ethers } from 'ethers';
-import { InfoClient, ExchangeClient } from '@nktkas/hyperliquid';
 import { logger } from '../lib/logger';
-import { WalletBalance } from '../types';
 
 export interface HyperliquidConfig {
-  apiUrl: string;
   privateKey: string;
   isTestnet: boolean;
 }
 
+export interface Position {
+  coin: string;
+  szi: string; // size (positive for long, negative for short)
+  entryPx: string;
+  positionValue: string;
+  unrealizedPnl: string;
+  returnOnEquity: string;
+  leverage: string;
+}
+
 export interface OrderRequest {
   coin: string;
-  isBuy: boolean;
-  size: number;
-  limitPrice?: number;
-  reduceOnly?: boolean;
-  orderType?: 'market' | 'limit';
+  is_buy: boolean;
+  sz: number;
+  limit_px?: number;
+  order_type: 'limit' | 'market';
+  reduce_only?: boolean;
 }
 
 export interface OrderResponse {
-  status: 'success' | 'failed';
-  orderId?: string;
-  fillPrice?: number;
-  fillSize?: number;
-  fee?: number;
+  status: 'ok' | 'error';
+  response?: {
+    type: 'order';
+    data: {
+      statuses: Array<{ filled: { totalSz: string; avgPx: string } | { resting: { oid: number } } }>;
+    };
+  };
   error?: string;
 }
 
-export interface PositionInfo {
-  coin: string;
-  szi: number; // signed size (positive for long, negative for short)
-  entryPx: number;
-  markPx: number;
-  unrealizedPnl: number;
-  realizedPnl: number;
-  marginUsed: number;
-  leverage: number;
-}
+export class HyperliquidClient {
+  private client: Hyperliquid | null = null;
+  private wallet: ethers.Wallet | null = null;
+  private isInitialized = false;
 
-export class HyperliquidService {
-  private infoClient: InfoClient;
-  private exchangeClient: ExchangeClient;
-  private wallet: ethers.Wallet;
-  private isTestnet: boolean;
+  constructor(private config: HyperliquidConfig) {}
 
-  constructor(config: HyperliquidConfig) {
-    this.isTestnet = config.isTestnet;
-    this.wallet = new ethers.Wallet(config.privateKey);
-
-    // Initialize Info Client
-    this.infoClient = new InfoClient(config.apiUrl);
-
-    // Initialize Exchange Client with viem wallet adapter
-    this.exchangeClient = new ExchangeClient(
-      this.wallet,
-      config.isTestnet
-    );
-
-    logger.info('Hyperliquid service initialized', {
-      address: this.wallet.address,
-      isTestnet: config.isTestnet,
-    });
-  }
-
-  async getBalance(): Promise<WalletBalance> {
+  async initialize() {
     try {
-      const userState = await this.infoClient.perpetuals.getUserState({
-        user: this.wallet.address,
-      });
-
-      const crossMarginSummary = userState.crossMarginSummary;
-      const totalValue = parseFloat(crossMarginSummary.accountValue);
-      const marginUsed = parseFloat(crossMarginSummary.marginUsed);
-      const available = totalValue - marginUsed;
-
-      return {
-        total: totalValue,
-        available: available,
-        reserved: marginUsed,
-        currency: 'USDC',
-      };
-    } catch (error) {
-      logger.error('Failed to get balance', { error });
-      throw new Error('Failed to fetch wallet balance');
-    }
-  }
-
-  async placeOrder(request: OrderRequest): Promise<OrderResponse> {
-    try {
-      const orderType = request.orderType || 'market';
-
-      const orderRequest = {
-        coin: request.coin,
-        is_buy: request.isBuy,
-        sz: request.size,
-        limit_px: orderType === 'limit' ? request.limitPrice : undefined,
-        order_type: orderType === 'limit'
-          ? { limit: { tif: 'Gtc' } }
-          : { market: {} },
-        reduce_only: request.reduceOnly || false,
-      };
-
-      const result = await this.exchangeClient.placeOrder(orderRequest);
-
-      if (result.status === 'ok' && result.response.type === 'order') {
-        const orderData = result.response.data;
-        const status = orderData.statuses[0];
-
-        if (status.filled) {
-          return {
-            status: 'success',
-            orderId: status.resting?.oid,
-            fillPrice: parseFloat(status.filled.avgPx),
-            fillSize: parseFloat(status.filled.totalSz),
-            fee: 0, // Calculate fee based on exchange rules
-          };
-        }
+      if (!this.config.privateKey || this.config.privateKey === 'encrypted-private-key-placeholder') {
+        logger.warn('Hyperliquid client not initialized - no valid private key configured');
+        return false;
       }
 
+      this.wallet = new ethers.Wallet(this.config.privateKey);
+
+      this.client = new Hyperliquid({
+        privateKey: this.config.privateKey,
+        testnet: this.config.isTestnet,
+      });
+
+      this.isInitialized = true;
+      logger.info('Hyperliquid client initialized', {
+        address: this.wallet.address,
+        testnet: this.config.isTestnet,
+      });
+
+      return true;
+    } catch (error: any) {
+      logger.error('Failed to initialize Hyperliquid client', { error: error.message });
+      return false;
+    }
+  }
+
+  async getAccountValue(): Promise<number> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      const userState = await this.client.info.perpetuals.getUserState({
+        user: this.wallet!.address,
+      });
+
+      const accountValue = parseFloat(userState.marginSummary.accountValue);
+      return accountValue;
+    } catch (error: any) {
+      logger.error('Failed to get account value', { error: error.message });
+      throw error;
+    }
+  }
+
+  async getPositions(): Promise<Position[]> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      const userState = await this.client.info.perpetuals.getUserState({
+        user: this.wallet!.address,
+      });
+
+      return userState.assetPositions.map((pos: any) => ({
+        coin: pos.position.coin,
+        szi: pos.position.szi,
+        entryPx: pos.position.entryPx,
+        positionValue: pos.position.positionValue,
+        unrealizedPnl: pos.position.unrealizedPnl,
+        returnOnEquity: pos.position.returnOnEquity,
+        leverage: pos.position.leverage,
+      }));
+    } catch (error: any) {
+      logger.error('Failed to get positions', { error: error.message });
+      throw error;
+    }
+  }
+
+  async placeOrder(order: OrderRequest): Promise<OrderResponse> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      const orderType = order.order_type === 'market'
+        ? { market: {} }
+        : { limit: { tif: 'Gtc' } };
+
+      const result = await this.client.exchange.placeOrder({
+        coin: order.coin,
+        is_buy: order.is_buy,
+        sz: order.sz,
+        limit_px: order.limit_px || null,
+        order_type: orderType,
+        reduce_only: order.reduce_only || false,
+      });
+
+      logger.info('Order placed', { order, result });
+
       return {
-        status: 'failed',
-        error: 'Order placement failed',
+        status: 'ok',
+        response: result,
       };
     } catch (error: any) {
-      logger.error('Failed to place order', { error, request });
+      logger.error('Failed to place order', { error: error.message, order });
       return {
-        status: 'failed',
-        error: error.message || 'Unknown error',
+        status: 'error',
+        error: error.message,
       };
     }
   }
 
-  async cancelOrder(orderId: string, coin: string): Promise<boolean> {
+  async cancelOrder(coin: string, orderId: number): Promise<boolean> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
     try {
-      const result = await this.exchangeClient.cancelOrder({
+      const result = await this.client.exchange.cancelOrder({
         coin,
         o: orderId,
       });
 
-      return result.status === 'ok';
-    } catch (error) {
-      logger.error('Failed to cancel order', { error, orderId, coin });
+      logger.info('Order cancelled', { coin, orderId, result });
+      return true;
+    } catch (error: any) {
+      logger.error('Failed to cancel order', { error: error.message, coin, orderId });
       return false;
     }
   }
 
-  async cancelAllOrders(coin?: string): Promise<boolean> {
+  async closePosition(coin: string): Promise<boolean> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
     try {
-      const result = await this.exchangeClient.cancelOrder({
-        coin: coin || undefined,
+      const positions = await this.getPositions();
+      const position = positions.find(p => p.coin === coin);
+
+      if (!position) {
+        logger.warn('No position found to close', { coin });
+        return false;
+      }
+
+      const size = Math.abs(parseFloat(position.szi));
+      const isBuy = parseFloat(position.szi) < 0; // Buy to close short, sell to close long
+
+      const result = await this.placeOrder({
+        coin,
+        is_buy: isBuy,
+        sz: size,
+        order_type: 'market',
+        reduce_only: true,
       });
 
       return result.status === 'ok';
-    } catch (error) {
-      logger.error('Failed to cancel all orders', { error, coin });
+    } catch (error: any) {
+      logger.error('Failed to close position', { error: error.message, coin });
       return false;
     }
   }
 
-  async getOpenOrders(coin?: string) {
-    try {
-      const openOrders = await this.infoClient.perpetuals.getUserOpenOrders({
-        user: this.wallet.address,
-      });
+  async getMarketPrice(coin: string): Promise<number> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
 
-      if (coin) {
-        return openOrders.filter(order => order.coin === coin);
+    try {
+      const meta = await this.client.info.perpetuals.getMeta();
+      const market = meta.universe.find((m: any) => m.name === coin);
+
+      if (!market) {
+        throw new Error(`Market not found: ${coin}`);
       }
 
-      return openOrders;
-    } catch (error) {
-      logger.error('Failed to get open orders', { error });
-      return [];
-    }
-  }
+      const allMids = await this.client.info.perpetuals.getAllMids();
+      const price = parseFloat(allMids[coin]);
 
-  async getPositions(): Promise<PositionInfo[]> {
-    try {
-      const userState = await this.infoClient.perpetuals.getUserState({
-        user: this.wallet.address,
-      });
-
-      return userState.assetPositions.map(pos => ({
-        coin: pos.position.coin,
-        szi: parseFloat(pos.position.szi),
-        entryPx: parseFloat(pos.position.entryPx || '0'),
-        markPx: parseFloat(pos.position.markPx || '0'),
-        unrealizedPnl: parseFloat(pos.position.unrealizedPnl || '0'),
-        realizedPnl: parseFloat(pos.position.cumFunding?.allTime || '0'),
-        marginUsed: parseFloat(pos.position.marginUsed || '0'),
-        leverage: parseFloat(pos.position.leverage?.value || '1'),
-      }));
-    } catch (error) {
-      logger.error('Failed to get positions', { error });
-      return [];
-    }
-  }
-
-  async getPosition(coin: string): Promise<PositionInfo | null> {
-    const positions = await this.getPositions();
-    return positions.find(p => p.coin === coin) || null;
-  }
-
-  async getCurrentPrice(coin: string): Promise<number> {
-    try {
-      const allMids = await this.infoClient.spot.getAllMids();
-      const price = allMids[coin];
-
-      if (!price) {
-        throw new Error(`Price not found for ${coin}`);
-      }
-
-      return parseFloat(price);
-    } catch (error) {
-      logger.error('Failed to get current price', { error, coin });
+      return price;
+    } catch (error: any) {
+      logger.error('Failed to get market price', { error: error.message, coin });
       throw error;
     }
   }
 
-  async getOrderBook(coin: string) {
-    try {
-      const l2Book = await this.infoClient.perpetuals.getL2Book({
-        coin,
-      });
-
-      return {
-        bids: l2Book.levels[0].map(level => ({
-          price: parseFloat(level.px),
-          size: parseFloat(level.sz),
-        })),
-        asks: l2Book.levels[1].map(level => ({
-          price: parseFloat(level.px),
-          size: parseFloat(level.sz),
-        })),
-      };
-    } catch (error) {
-      logger.error('Failed to get order book', { error, coin });
-      throw error;
-    }
+  isReady(): boolean {
+    return this.isInitialized;
   }
 
-  async getTradeHistory(coin?: string, limit = 100) {
-    try {
-      const fills = await this.infoClient.perpetuals.getUserFills({
-        user: this.wallet.address,
-      });
-
-      let trades = fills;
-
-      if (coin) {
-        trades = trades.filter(fill => fill.coin === coin);
-      }
-
-      return trades.slice(0, limit).map(fill => ({
-        coin: fill.coin,
-        side: fill.side,
-        price: parseFloat(fill.px),
-        size: parseFloat(fill.sz),
-        fee: parseFloat(fill.fee),
-        timestamp: fill.time,
-        orderId: fill.oid,
-      }));
-    } catch (error) {
-      logger.error('Failed to get trade history', { error });
-      return [];
-    }
-  }
-
-  async setLeverage(coin: string, leverage: number): Promise<boolean> {
-    try {
-      const result = await this.exchangeClient.updateLeverage({
-        coin,
-        leverage,
-        is_cross: true, // Use cross margin
-      });
-
-      return result.status === 'ok';
-    } catch (error) {
-      logger.error('Failed to set leverage', { error, coin, leverage });
-      return false;
-    }
-  }
-
-  async getAccountInfo() {
-    try {
-      const userState = await this.infoClient.perpetuals.getUserState({
-        user: this.wallet.address,
-      });
-
-      return {
-        address: this.wallet.address,
-        accountValue: parseFloat(userState.crossMarginSummary.accountValue),
-        totalMarginUsed: parseFloat(userState.crossMarginSummary.marginUsed),
-        totalUnrealizedPnl: parseFloat(userState.crossMarginSummary.totalUnrealizedPnl),
-        availableBalance: parseFloat(userState.crossMarginSummary.accountValue) -
-                         parseFloat(userState.crossMarginSummary.marginUsed),
-      };
-    } catch (error) {
-      logger.error('Failed to get account info', { error });
-      throw error;
-    }
-  }
-
-  async getFundingRate(coin: string) {
-    try {
-      const fundingHistory = await this.infoClient.perpetuals.getFundingHistory({
-        coin,
-        startTime: Date.now() - 24 * 60 * 60 * 1000, // Last 24 hours
-      });
-
-      if (fundingHistory.length > 0) {
-        const latestFunding = fundingHistory[fundingHistory.length - 1];
-        return {
-          rate: parseFloat(latestFunding.fundingRate),
-          nextFundingTime: latestFunding.time + 8 * 60 * 60 * 1000, // 8 hours
-        };
-      }
-
-      return null;
-    } catch (error) {
-      logger.error('Failed to get funding rate', { error, coin });
-      return null;
-    }
+  getWalletAddress(): string | null {
+    return this.wallet?.address || null;
   }
 }

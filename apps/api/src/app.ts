@@ -95,11 +95,40 @@ async function main() {
     const wsService = new WebSocketService(io, prisma);
     app.decorate('wsService', wsService);
 
+    // Initialize Hyperliquid client if private key is configured
+    const { HyperliquidClient } = await import('./services/hyperliquid-client');
+    let hyperliquidClient = null;
+
+    if (process.env.WALLET_PRIVATE_KEY && process.env.WALLET_PRIVATE_KEY !== 'encrypted-private-key-placeholder') {
+      hyperliquidClient = new HyperliquidClient({
+        privateKey: process.env.WALLET_PRIVATE_KEY,
+        isTestnet: process.env.HYPERLIQUID_API_URL?.includes('testnet') || false
+      });
+
+      const initialized = await hyperliquidClient.initialize();
+      if (initialized) {
+        logger.info('Hyperliquid client initialized successfully', {
+          address: hyperliquidClient.getWalletAddress(),
+          testnet: process.env.HYPERLIQUID_API_URL?.includes('testnet') || false
+        });
+      } else {
+        logger.warn('Hyperliquid client failed to initialize');
+        hyperliquidClient = null;
+      }
+    } else {
+      logger.warn('No wallet private key configured - trading disabled');
+    }
+
+    app.decorate('hyperliquidClient', hyperliquidClient);
+
     // Use PyramidTradingEngine if pyramiding is enabled
     const enablePyramiding = process.env.ENABLE_PYRAMIDING === 'true';
 
     if (enablePyramiding) {
       const pyramidEngine = new PyramidTradingEngine(prisma, redis, wsService);
+      if (hyperliquidClient) {
+        pyramidEngine.setHyperliquidClient(hyperliquidClient);
+      }
       await pyramidEngine.start();
       app.decorate('pyramidEngine', pyramidEngine);
       logger.info('Pyramid trading engine started');
