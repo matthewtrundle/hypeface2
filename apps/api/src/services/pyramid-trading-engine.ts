@@ -189,7 +189,9 @@ export class PyramidTradingEngine {
     const leverage = this.config.leverageLevels[state.entryCount];
     const positionSize = accountValue * (entryPercentage / 100);
     const currentPrice = signal.price || await this.hyperliquidClient!.getMarketPrice(signal.symbol);
-    const sizeInAsset = positionSize / currentPrice;
+    // Round to 5 significant digits for Hyperliquid
+    const rawSize = positionSize / currentPrice;
+    const sizeInAsset = Math.floor(rawSize * 100000) / 100000;
 
     logger.info(`Adding pyramid level ${state.entryCount + 1}`, {
       symbol: signal.symbol,
@@ -231,6 +233,7 @@ export class PyramidTradingEngine {
       data: {
         userId,
         symbol: signal.symbol,
+        action: signal.action, // Add missing action field
         size: new Decimal(positionSize),
         leverage,
         metadata: {
@@ -298,6 +301,7 @@ export class PyramidTradingEngine {
       data: {
         userId,
         symbol: signal.symbol,
+        action: signal.action, // Add missing action field
         size: new Decimal(exitSize),
         metadata: {
           exitLevel: state.exitCount,
