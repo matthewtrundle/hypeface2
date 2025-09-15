@@ -285,14 +285,14 @@ export class PyramidTradingEngine {
     // Place the reduce order on Hyperliquid
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
-      isBuy: false,
-      size: exitSize,
-      limitPrice: signal.price * 0.999, // Slight slippage tolerance
-      orderType: 'limit',
-      reduceOnly: true // Important: this reduces the position
+      is_buy: false,
+      sz: exitSize,
+      limit_px: signal.price * 0.999, // Slight slippage tolerance
+      order_type: 'limit',
+      reduce_only: true // Important: this reduces the position
     };
 
-    const orderResult = await this.hyperliquidService!.placeOrder(orderRequest);
+    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
 
     // Update pyramid state
     state.exitCount++;
@@ -475,10 +475,10 @@ export class PyramidTradingEngine {
    * Check individual position risk
    */
   private async checkPositionRisk(position: Position) {
-    if (!this.hyperliquidService) return;
+    if (!this.hyperliquidClient) return;
 
     try {
-      const currentPrice = await this.hyperliquidService.getCurrentPrice(position.symbol);
+      const currentPrice = await this.hyperliquidClient!.getMarketPrice(position.symbol);
       const entryPrice = position.entryPrice.toNumber();
       const pnlPercentage = ((currentPrice - entryPrice) / entryPrice) * 100;
 
@@ -512,19 +512,19 @@ export class PyramidTradingEngine {
    * Close a position completely
    */
   private async closePosition(position: Position) {
-    if (!this.hyperliquidService) return;
+    if (!this.hyperliquidClient) return;
 
     try {
       const orderRequest: OrderRequest = {
         coin: position.symbol,
-        isBuy: false,
-        size: position.size.toNumber(),
-        limitPrice: 0, // Market order
-        orderType: 'market',
-        reduceOnly: true
+        is_buy: false,
+        sz: position.size.toNumber(),
+        limit_px: 0, // Market order
+        order_type: 'market',
+        reduce_only: true
       };
 
-      await this.hyperliquidService.placeOrder(orderRequest);
+      await this.hyperliquidClient!.placeOrder(orderRequest);
 
       // Update position status
       await this.prisma.position.update({
@@ -600,9 +600,9 @@ export class PyramidTradingEngine {
   private async checkAccountRisk(userId: string) {
     try {
       const wallet = await this.walletManager.getActiveWallet(userId);
-      if (!wallet || !this.hyperliquidService) return;
+      if (!wallet || !this.hyperliquidClient) return;
 
-      const balanceInfo = await this.hyperliquidService.getBalance();
+      const balanceInfo = await this.hyperliquidClient!.getBalance();
       const positions = await this.prisma.position.findMany({
         where: { userId, status: 'open' }
       });
@@ -628,14 +628,14 @@ export class PyramidTradingEngine {
           const reduceSize = position.size.toNumber() * 0.5;
           const orderRequest: OrderRequest = {
             coin: position.symbol,
-            isBuy: false,
-            size: reduceSize,
-            limitPrice: 0,
-            orderType: 'market',
-            reduceOnly: true
+            is_buy: false,
+            sz: reduceSize,
+            limit_px: 0,
+            order_type: 'market',
+            reduce_only: true
           };
 
-          await this.hyperliquidService.placeOrder(orderRequest);
+          await this.hyperliquidClient!.placeOrder(orderRequest);
         }
       }
     } catch (error) {
