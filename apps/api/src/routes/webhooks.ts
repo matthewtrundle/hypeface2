@@ -66,8 +66,8 @@ export async function webhookRoutes(fastify: FastifyInstance) {
             error: 'Invalid signature',
           });
         }
-      } else if (process.env.NODE_ENV === 'production') {
-        // In production, signature is required
+      } else if (process.env.NODE_ENV === 'production' && webhookSecret) {
+        // Only require signature if WEBHOOK_SECRET is set
         logger.warn('Missing webhook signature in production');
         return reply.status(401).send({
           error: 'Signature required',
