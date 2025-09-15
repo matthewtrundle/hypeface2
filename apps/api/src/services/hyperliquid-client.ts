@@ -125,7 +125,7 @@ export class HyperliquidClient {
         coin: order.coin,
         is_buy: order.is_buy,
         sz: order.sz,
-        order_type: order.order_type === 'market' ? { market: {} } : { limit: { tif: 'Gtc' } },
+        order_type: order.order_type === 'market' ? { market: {} } : { limit: { tif: 'Ioc' } }, // Use Ioc for better fills
         reduce_only: order.reduce_only || false,
       };
 

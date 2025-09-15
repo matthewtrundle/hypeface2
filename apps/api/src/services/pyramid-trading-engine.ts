@@ -200,12 +200,16 @@ export class PyramidTradingEngine {
       entryPercentage
     });
 
-    // Place the order on Hyperliquid (use market order for better execution)
+    // Place the order on Hyperliquid with proper tick size rounding
+    const tickSize = 0.05; // SOL-PERP tick size
+    const limitPrice = Math.round((currentPrice * 1.001) / tickSize) * tickSize;
+
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
       is_buy: true,
       sz: sizeInAsset,
-      order_type: 'market',
+      limit_px: limitPrice,
+      order_type: 'limit',
       reduce_only: false
     };
 
