@@ -77,9 +77,7 @@ export class HyperliquidClient {
     }
 
     try {
-      const userState = await this.client.info.perpetuals.getUserState({
-        user: this.wallet!.address,
-      });
+      const userState = await this.client.info.getUserState(this.wallet!.address);
 
       const accountValue = parseFloat(userState.marginSummary.accountValue);
       return accountValue;
@@ -95,9 +93,7 @@ export class HyperliquidClient {
     }
 
     try {
-      const userState = await this.client.info.perpetuals.getUserState({
-        user: this.wallet!.address,
-      });
+      const userState = await this.client.info.getUserState(this.wallet!.address);
 
       return userState.assetPositions.map((pos: any) => ({
         coin: pos.position.coin,
@@ -205,15 +201,12 @@ export class HyperliquidClient {
     }
 
     try {
-      const meta = await this.client.info.perpetuals.getMeta();
-      const market = meta.universe.find((m: any) => m.name === coin);
-
-      if (!market) {
-        throw new Error(`Market not found: ${coin}`);
-      }
-
-      const allMids = await this.client.info.perpetuals.getAllMids();
+      const allMids = await this.client.info.getAllMids();
       const price = parseFloat(allMids[coin]);
+
+      if (!price || isNaN(price)) {
+        throw new Error(`Price not found for ${coin}`);
+      }
 
       return price;
     } catch (error: any) {
