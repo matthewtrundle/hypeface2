@@ -184,10 +184,10 @@ export class PyramidTradingEngine {
 
     const accountValue = await this.hyperliquidClient!.getAccountValue();
 
-    // Calculate position size for this pyramid level
+    // Calculate position size for this pyramid level WITH LEVERAGE
     const entryPercentage = this.config.entryPercentages[state.entryCount];
     const leverage = this.config.leverageLevels[state.entryCount];
-    const positionSize = accountValue * (entryPercentage / 100);
+    const positionSize = accountValue * (entryPercentage / 100) * leverage; // Apply leverage!
     const currentPrice = signal.price || await this.hyperliquidClient!.getMarketPrice(signal.symbol);
     // Round to 2 decimal places for SOL-PERP (Hyperliquid requirement)
     const rawSize = positionSize / currentPrice;
