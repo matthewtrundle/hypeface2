@@ -77,9 +77,9 @@ export class HyperliquidClient {
     }
 
     try {
-      const clearinghouseState = await this.client.info.clearinghouseState({
-        user: this.wallet!.address,
-      });
+      const clearinghouseState = await this.client.info.perpetuals.getClearinghouseState(
+        this.wallet!.address
+      );
 
       const accountValue = parseFloat(clearinghouseState.marginSummary.accountValue);
       return accountValue;
@@ -95,9 +95,9 @@ export class HyperliquidClient {
     }
 
     try {
-      const clearinghouseState = await this.client.info.clearinghouseState({
-        user: this.wallet!.address,
-      });
+      const clearinghouseState = await this.client.info.perpetuals.getClearinghouseState(
+        this.wallet!.address
+      );
 
       return clearinghouseState.assetPositions.map((pos: any) => ({
         coin: pos.position.coin,
@@ -205,7 +205,7 @@ export class HyperliquidClient {
     }
 
     try {
-      const allMids = await this.client.info.getAllMids();
+      const allMids = await this.client.info.generalAPI.getAllMids();
       const price = parseFloat(allMids[coin]);
 
       if (!price || isNaN(price)) {
