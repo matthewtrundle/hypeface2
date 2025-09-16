@@ -339,8 +339,9 @@ export class PyramidTradingEngine {
 
     logger.info('Placing order on Hyperliquid', { orderRequest });
 
+    let orderResult: any;
     try {
-      const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+      orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
       logger.info('Order placed successfully', { orderResult });
     } catch (orderError: any) {
       logger.error('Failed to place order on Hyperliquid', {
