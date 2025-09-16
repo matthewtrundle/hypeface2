@@ -70,6 +70,9 @@ export class PyramidTradingEngine {
   async start() {
     logger.info('Starting pyramid trading engine');
 
+    // Load existing positions into pyramid state
+    await this.loadExistingPositions();
+
     // Start signal processing loop
     this.processSignals();
 
@@ -80,6 +83,51 @@ export class PyramidTradingEngine {
     this.monitorRisk();
 
     logger.info('Pyramid trading engine started');
+  }
+
+  /**
+   * Load existing open positions from database into pyramid state
+   */
+  private async loadExistingPositions() {
+    try {
+      const openPositions = await this.prisma.position.findMany({
+        where: { status: 'open' }
+      });
+
+      for (const position of openPositions) {
+        const symbol = position.symbol;
+        const state: PyramidState = {
+          symbol,
+          entryCount: 1, // Assume at least one entry
+          exitCount: 0,
+          currentSize: position.size.toNumber(),
+          averageEntry: position.entryPrice.toNumber(),
+          totalCapitalUsed: position.size.toNumber() * position.entryPrice.toNumber(),
+          positions: [{
+            size: position.size.toNumber() * position.entryPrice.toNumber(),
+            entry: position.entryPrice.toNumber(),
+            leverage: 3, // Default leverage, could be stored in metadata
+            timestamp: position.createdAt
+          }]
+        };
+
+        // Check if metadata has pyramid info
+        const metadata = position.metadata as any;
+        if (metadata?.pyramidLevel) {
+          state.entryCount = metadata.pyramidLevel;
+        }
+
+        this.pyramidStates.set(symbol, state);
+        logger.info(`Loaded existing position for ${symbol}`, {
+          size: state.currentSize,
+          averageEntry: state.averageEntry
+        });
+      }
+
+      logger.info(`Loaded ${openPositions.length} existing positions into pyramid state`);
+    } catch (error) {
+      logger.error('Error loading existing positions', error);
+    }
   }
 
   setHyperliquidClient(client: HyperliquidClient) {
@@ -268,13 +316,39 @@ export class PyramidTradingEngine {
   ): Promise<void> {
     // Check if we have a position to reduce
     if (state.currentSize === 0) {
-      logger.info(`No position to reduce for ${signal.symbol}`);
-      return;
+      // Double-check by querying Hyperliquid directly
+      logger.info(`No position in state for ${signal.symbol}, checking Hyperliquid...`);
+
+      const positions = await this.hyperliquidClient!.getPositions();
+      const hlPosition = positions.find(p => p.coin === signal.symbol);
+
+      if (!hlPosition || Math.abs(hlPosition.szi) < 0.0001) {
+        logger.info(`No position found on Hyperliquid for ${signal.symbol}`);
+        return;
+      }
+
+      // Position exists on Hyperliquid but not in our state, sync it
+      logger.info(`Found position on Hyperliquid for ${signal.symbol}, syncing state...`, {
+        size: hlPosition.szi,
+        entry: hlPosition.entryPx
+      });
+
+      state.currentSize = Math.abs(hlPosition.szi);
+      state.averageEntry = hlPosition.entryPx || 0;
+      state.entryCount = 1;
+      state.positions = [{
+        size: state.currentSize * state.averageEntry,
+        entry: state.averageEntry,
+        leverage: 3,
+        timestamp: new Date()
+      }];
     }
 
     // Calculate exit size for this level
     const exitPercentage = this.config.exitPercentages[Math.min(state.exitCount, this.config.exitPercentages.length - 1)];
-    const exitSize = state.currentSize * (exitPercentage / 100);
+    const rawExitSize = state.currentSize * (exitPercentage / 100);
+    // Round to 2 decimal places for SOL-PERP
+    const exitSize = Math.floor(rawExitSize * 100) / 100;
 
     logger.info(`Reducing position by ${exitPercentage}%`, {
       symbol: signal.symbol,
@@ -282,12 +356,18 @@ export class PyramidTradingEngine {
       currentSize: state.currentSize
     });
 
-    // Place the reduce order on Hyperliquid
+    // Get current price if not provided
+    const currentPrice = signal.price || await this.hyperliquidClient!.getMarketPrice(signal.symbol);
+
+    // Place the reduce order on Hyperliquid with proper tick size
+    const tickSize = 0.05; // SOL-PERP tick size
+    const limitPrice = Math.round((currentPrice * 0.999) / tickSize) * tickSize;
+
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
       is_buy: false,
       sz: exitSize,
-      limit_px: signal.price * 0.999, // Slight slippage tolerance
+      limit_px: limitPrice,
       order_type: 'limit',
       reduce_only: true // Important: this reduces the position
     };
