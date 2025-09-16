@@ -115,17 +115,33 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         fastify.wsService
       );
 
-      // Process the signal with pyramid strategy
-      await pyramidEngine.processSignal(
-        { ...signal, id: savedSignal.id, price: value.price },
-        userId
-      );
+      try {
+        // Process the signal with pyramid strategy
+        await pyramidEngine.processSignal(
+          { ...signal, id: savedSignal.id, price: value.price },
+          userId
+        );
 
-      // Update signal status
-      await fastify.prisma.signal.update({
-        where: { id: savedSignal.id },
-        data: { status: 'processed', processedAt: new Date() }
-      });
+        // Update signal status to processed
+        await fastify.prisma.signal.update({
+          where: { id: savedSignal.id },
+          data: { status: 'processed', processedAt: new Date() }
+        });
+      } catch (processingError: any) {
+        // Update signal status to failed
+        await fastify.prisma.signal.update({
+          where: { id: savedSignal.id },
+          data: {
+            status: 'failed',
+            metadata: {
+              ...savedSignal.metadata,
+              error: processingError.message,
+              errorTime: new Date().toISOString()
+            }
+          }
+        });
+        throw processingError;
+      }
 
       logger.info('Signal processed with pyramid strategy', {
         signalId: savedSignal.id,
@@ -141,9 +157,15 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       });
 
     } catch (error: any) {
-      logger.error('Webhook processing error', { error: error.message });
+      logger.error('Webhook processing error', {
+        error: error.message,
+        stack: error.stack,
+        webhook: payload,
+        userId
+      });
       return reply.status(500).send({
         error: 'Internal server error',
+        message: error.message
       });
     }
   });

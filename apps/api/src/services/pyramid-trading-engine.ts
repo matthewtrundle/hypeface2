@@ -214,19 +214,29 @@ export class PyramidTradingEngine {
    */
   async processSignal(signal: TradingSignal, userId: string): Promise<void> {
     try {
-      logger.info('Processing signal with pyramid logic', { signal });
+      logger.info('Processing signal with pyramid logic', { signal, userId });
 
       // Initialize Hyperliquid if needed
       if (!this.hyperliquidClient) {
+        logger.info('Initializing Hyperliquid client for signal processing');
         await this.initializeHyperliquid(userId);
+        logger.info('Hyperliquid client initialized successfully');
       }
 
       // Get or create pyramid state for this symbol
       const state = this.getPyramidState(signal.symbol);
+      logger.info('Current pyramid state', {
+        symbol: signal.symbol,
+        entryCount: state.entryCount,
+        currentSize: state.currentSize,
+        positions: state.positions.length
+      });
 
       if (signal.action === 'buy') {
+        logger.info('Processing BUY signal');
         await this.handleBuySignal(signal, userId, state);
       } else if (signal.action === 'sell') {
+        logger.info('Processing SELL signal');
         await this.handleSellSignal(signal, userId, state);
       }
 
@@ -242,8 +252,19 @@ export class PyramidTradingEngine {
         averageEntry: state.averageEntry
       });
 
-    } catch (error) {
-      logger.error('Error processing pyramid signal', error);
+      logger.info('Signal processed successfully', {
+        symbol: signal.symbol,
+        action: signal.action,
+        pyramidLevel: state.entryCount
+      });
+
+    } catch (error: any) {
+      logger.error('Error processing pyramid signal', {
+        error: error.message,
+        stack: error.stack,
+        signal,
+        userId
+      });
       throw error;
     }
   }
@@ -297,7 +318,19 @@ export class PyramidTradingEngine {
       reduce_only: false
     };
 
-    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+    logger.info('Placing order on Hyperliquid', { orderRequest });
+
+    try {
+      const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+      logger.info('Order placed successfully', { orderResult });
+    } catch (orderError: any) {
+      logger.error('Failed to place order on Hyperliquid', {
+        error: orderError.message,
+        orderRequest,
+        stack: orderError.stack
+      });
+      throw new Error(`Failed to place order: ${orderError.message}`);
+    }
 
     // Update pyramid state
     const newPosition = {
