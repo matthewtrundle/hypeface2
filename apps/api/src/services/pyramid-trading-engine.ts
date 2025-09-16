@@ -132,16 +132,35 @@ export class PyramidTradingEngine {
 
       for (const position of openPositions) {
         const symbol = position.symbol;
+        const avgEntry = position.entryPrice.toNumber();
+        const size = position.size.toNumber();
+
+        // Skip invalid/corrupted positions
+        if (avgEntry < 1 || avgEntry > 100000) {
+          logger.warn(`Skipping corrupted position for ${symbol}`, {
+            size,
+            averageEntry: avgEntry,
+            reason: 'Invalid entry price'
+          });
+
+          // Close the corrupted position in database
+          await this.prisma.position.update({
+            where: { id: position.id },
+            data: { status: 'closed', closedAt: new Date() }
+          });
+          continue;
+        }
+
         const state: PyramidState = {
           symbol,
           entryCount: 1, // Assume at least one entry
           exitCount: 0,
-          currentSize: position.size.toNumber(),
-          averageEntry: position.entryPrice.toNumber(),
-          totalCapitalUsed: position.size.toNumber() * position.entryPrice.toNumber(),
+          currentSize: size,
+          averageEntry: avgEntry,
+          totalCapitalUsed: size * avgEntry,
           positions: [{
-            size: position.size.toNumber() * position.entryPrice.toNumber(),
-            entry: position.entryPrice.toNumber(),
+            size: size * avgEntry,
+            entry: avgEntry,
             leverage: 3, // Default leverage, could be stored in metadata
             timestamp: position.openedAt
           }]
