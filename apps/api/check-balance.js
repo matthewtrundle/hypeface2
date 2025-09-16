@@ -1,4 +1,4 @@
-const { HyperliquidClient } = require('./src/services/hyperliquid');
+const { HyperliquidClient } = require('./src/services/hyperliquid-client');
 
 async function checkBalance() {
   try {

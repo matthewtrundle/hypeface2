@@ -27,6 +27,8 @@ interface WebhookRequest extends FastifyRequest {
 export async function webhookRoutes(fastify: FastifyInstance) {
   // TradingView webhook endpoint
   fastify.post('/tradingview', async (request: WebhookRequest, reply: FastifyReply) => {
+    let userId: string | null = null; // Declare userId outside try block
+
     try {
       const signature = request.headers['x-webhook-signature'];
       const timestamp = request.headers['x-webhook-timestamp'];
@@ -87,7 +89,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       };
 
       // Get user ID from webhook or use default user
-      const userId = await getUserIdFromWebhook(fastify, payload);
+      userId = await getUserIdFromWebhook(fastify, payload);
 
       if (!userId) {
         logger.error('No user found for webhook');
