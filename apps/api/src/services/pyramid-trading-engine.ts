@@ -52,11 +52,47 @@ export class PyramidTradingEngine {
   ) {
     this.walletManager = new WalletManager(prisma);
 
-    // Load pyramid configuration from environment
+    // Load pyramid configuration from environment with style presets
+    const pyramidStyle = process.env.PYRAMID_STYLE || 'increasing'; // 'increasing', 'decreasing', or 'custom'
+
+    // Define preset configurations
+    const presets = {
+      increasing: {
+        entryPercentages: [15, 25, 30, 30],
+        exitPercentages: [25, 25, 25, 25],
+        leverageLevels: [4, 6, 8, 10]
+      },
+      decreasing: {
+        entryPercentages: [40, 30, 20, 10],
+        exitPercentages: [40, 30, 20, 10],
+        leverageLevels: [10, 8, 6, 4]
+      },
+      equal: {
+        entryPercentages: [25, 25, 25, 25],
+        exitPercentages: [25, 25, 25, 25],
+        leverageLevels: [7, 7, 7, 7]
+      },
+      conservative: {
+        entryPercentages: [10, 15, 20, 25],
+        exitPercentages: [25, 25, 25, 25],
+        leverageLevels: [3, 4, 5, 6]
+      }
+    };
+
+    // Use preset or custom configuration
+    let selectedConfig;
+    if (pyramidStyle === 'custom') {
+      selectedConfig = {
+        entryPercentages: (process.env.PYRAMID_ENTRY_PERCENTAGES || '15,25,30,30').split(',').map(Number),
+        exitPercentages: (process.env.PYRAMID_EXIT_PERCENTAGES || '25,25,25,25').split(',').map(Number),
+        leverageLevels: (process.env.PYRAMID_LEVERAGE_LEVELS || '4,6,8,10').split(',').map(Number)
+      };
+    } else {
+      selectedConfig = presets[pyramidStyle as keyof typeof presets] || presets.increasing;
+    }
+
     this.config = {
-      entryPercentages: (process.env.PYRAMID_ENTRY_PERCENTAGES || '40,30,20,10').split(',').map(Number),
-      exitPercentages: (process.env.PYRAMID_EXIT_PERCENTAGES || '40,30,20,10').split(',').map(Number),
-      leverageLevels: (process.env.PYRAMID_LEVERAGE_LEVELS || '10,8,6,4').split(',').map(Number),
+      ...selectedConfig,
       maxPyramidLevels: parseInt(process.env.MAX_PYRAMID_LEVELS || '4'),
       stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || '10'),
       trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || '5'),
@@ -64,7 +100,7 @@ export class PyramidTradingEngine {
       enablePyramiding: process.env.ENABLE_PYRAMIDING !== 'false'
     };
 
-    logger.info('Pyramid Trading Engine initialized', { config: this.config });
+    logger.info(`Pyramid Trading Engine initialized with '${pyramidStyle}' style`, { config: this.config });
   }
 
   async start() {
