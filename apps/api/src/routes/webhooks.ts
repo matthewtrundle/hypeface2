@@ -160,7 +160,6 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       logger.error('Webhook processing error', {
         error: error.message,
         stack: error.stack,
-        webhook: payload,
         userId
       });
       return reply.status(500).send({
