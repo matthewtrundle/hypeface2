@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "curl"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -107,15 +107,15 @@ export class PyramidTradingEngine {
             size: position.size.toNumber() * position.entryPrice.toNumber(),
             entry: position.entryPrice.toNumber(),
             leverage: 3, // Default leverage, could be stored in metadata
-            timestamp: position.createdAt
+            timestamp: position.openedAt
           }]
         };
 
-        // Check if metadata has pyramid info
-        const metadata = position.metadata as any;
-        if (metadata?.pyramidLevel) {
-          state.entryCount = metadata.pyramidLevel;
-        }
+        // Check if metadata has pyramid info (metadata might not exist)
+        // const metadata = position.metadata as any;
+        // if (metadata?.pyramidLevel) {
+        //   state.entryCount = metadata.pyramidLevel;
+        // }
 
         this.pyramidStates.set(symbol, state);
         logger.info(`Loaded existing position for ${symbol}`, {
@@ -322,7 +322,7 @@ export class PyramidTradingEngine {
       const positions = await this.hyperliquidClient!.getPositions();
       const hlPosition = positions.find(p => p.coin === signal.symbol);
 
-      if (!hlPosition || Math.abs(hlPosition.szi) < 0.0001) {
+      if (!hlPosition || Math.abs(parseFloat(hlPosition.szi)) < 0.0001) {
         logger.info(`No position found on Hyperliquid for ${signal.symbol}`);
         return;
       }
@@ -333,8 +333,8 @@ export class PyramidTradingEngine {
         entry: hlPosition.entryPx
       });
 
-      state.currentSize = Math.abs(hlPosition.szi);
-      state.averageEntry = hlPosition.entryPx || 0;
+      state.currentSize = Math.abs(parseFloat(hlPosition.szi));
+      state.averageEntry = parseFloat(hlPosition.entryPx) || 0;
       state.entryCount = 1;
       state.positions = [{
         size: state.currentSize * state.averageEntry,
@@ -682,7 +682,8 @@ export class PyramidTradingEngine {
       const wallet = await this.walletManager.getActiveWallet(userId);
       if (!wallet || !this.hyperliquidClient) return;
 
-      const balanceInfo = await this.hyperliquidClient!.getBalance();
+      const accountValue = await this.hyperliquidClient!.getAccountValue();
+      const balanceInfo = { available: accountValue }; // Simple balance structure
       const positions = await this.prisma.position.findMany({
         where: { userId, status: 'open' }
       });

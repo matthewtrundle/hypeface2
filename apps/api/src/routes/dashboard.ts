@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../lib/logger';
 import { JWTPayload, DashboardData, SystemStatus } from '../types';
 import { WalletManager } from '../services/wallet-manager';
-import { HyperliquidService } from '../services/hyperliquid-client';
+import { HyperliquidClient } from '../services/hyperliquid-client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PyramidTradingEngine } from '../services/pyramid-trading-engine';
 
@@ -52,14 +52,12 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       if (wallet) {
         try {
           const privateKey = await walletManager.getDecryptedPrivateKey(wallet.id, userId);
-          const hyperliquid = new HyperliquidService({
-            apiUrl: wallet.isTestnet
-              ? process.env.HYPERLIQUID_API_URL!
-              : process.env.HYPERLIQUID_MAINNET_URL!,
+          const hyperliquid = new HyperliquidClient({
             privateKey,
-            isTestnet: wallet.isTestnet,
+            isTestnet: wallet.isTestnet
           });
-          balance = await hyperliquid.getBalance();
+          const accountValue = await hyperliquid.getAccountValue();
+          balance = { total: accountValue, available: accountValue, reserved: 0, currency: 'USD' };
         } catch (error) {
           logger.error('Failed to get balance', error);
         }
@@ -210,15 +208,13 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       }
 
       const privateKey = await walletManager.getDecryptedPrivateKey(wallet.id, userId);
-      const hyperliquid = new HyperliquidService({
-        apiUrl: wallet.isTestnet
-          ? process.env.HYPERLIQUID_API_URL!
-          : process.env.HYPERLIQUID_MAINNET_URL!,
+      const hyperliquid = new HyperliquidClient({
         privateKey,
-        isTestnet: wallet.isTestnet,
+        isTestnet: wallet.isTestnet
       });
 
-      const balance = await hyperliquid.getBalance();
+      const accountValue = await hyperliquid.getAccountValue();
+      const balance = { available: accountValue };
 
       return reply.status(200).send(balance);
     } catch (error: any) {
