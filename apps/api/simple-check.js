@@ -1,79 +1,50 @@
-// Simple check of account balance and position sizing calculation
-require('dotenv').config();
+async function testWebhookSystem() {
+  try {
+    console.log('=== TESTING WEBHOOK SYSTEM ===');
+    console.log('\n1. Checking API Health...');
 
-async function calculateExpectedPositionSize() {
-  console.log('=== PYRAMID POSITION SIZING ANALYSIS ===\n');
+    const healthRes = await fetch('https://hypeface-production.up.railway.app/health');
+    const health = await healthRes.json();
+    console.log('   Health:', health);
 
-  // Pyramid configuration (from the code)
-  const config = {
-    entryPercentages: [15, 25, 30, 30],  // % of account per level
-    leverageLevels: [4, 6, 8, 10],       // leverage per level
-    maxPyramidLevels: 4
-  };
+    console.log('\n2. Sending SELL signal via webhook...');
+    const webhookRes = await fetch('https://hypeface-production.up.railway.app/webhooks/tradingview?secret=3e8e55210be930325825be0b2b204f43f558baec', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'sell',
+        symbol: 'SOL-PERP',
+        price: 235.00,
+        strategy: 'pyramid'
+      })
+    });
 
-  console.log('Pyramid Configuration:');
-  console.log('Entry Percentages:', config.entryPercentages);
-  console.log('Leverage Levels:', config.leverageLevels);
-  console.log();
+    const result = await webhookRes.json();
+    console.log('   Response:', result);
 
-  // Simulate different account values
-  const testAccountValues = [100, 500, 1000, 2000]; // USD
-  const solPrice = 140; // Approximate SOL price
+    if (result.signalId) {
+      console.log('\n3. Checking signal status...');
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
 
-  console.log('EXPECTED POSITION SIZES BY ACCOUNT VALUE:\n');
+      const statusRes = await fetch(`https://hypeface-production.up.railway.app/webhooks/status/${result.signalId}`);
+      const status = await statusRes.json();
+      console.log('   Signal Status:', JSON.stringify(status, null, 2));
 
-  for (const accountValue of testAccountValues) {
-    console.log(`Account Value: $${accountValue}`);
-    console.log('Level | Entry% | Leverage | USD Size | SOL Size | Total SOL');
-    console.log('------|--------|----------|----------|----------|----------');
-
-    let totalSolPosition = 0;
-
-    for (let level = 0; level < config.maxPyramidLevels; level++) {
-      const entryPercentage = config.entryPercentages[level];
-      const leverage = config.leverageLevels[level];
-
-      // CRITICAL: The bug is here - position size calculation
-      // Current buggy code: positionSize = accountValue * (entryPercentage / 100) * leverage
-      // This applies leverage to the USD value, which is wrong
-
-      const usdSize = accountValue * (entryPercentage / 100) * leverage;
-      const solSize = usdSize / solPrice;
-      totalSolPosition += solSize;
-
-      console.log(`  ${level + 1}   |   ${entryPercentage}%  |    ${leverage}x    | $${usdSize.toFixed(0).padStart(6)} | ${solSize.toFixed(2).padStart(6)} | ${totalSolPosition.toFixed(2).padStart(6)}`);
+      if (status.signal && status.signal.metadata && status.signal.metadata.error) {
+        console.log('\n❌ ERROR IN SIGNAL PROCESSING:');
+        console.log('   ', status.signal.metadata.error);
+      } else if (status.trades && status.trades > 0) {
+        console.log('\n✅ TRADE EXECUTED SUCCESSFULLY!');
+      } else {
+        console.log('\n⚠️  NO TRADES EXECUTED - Check logs for details');
+      }
     }
 
-    console.log();
-    console.log(`Total Position Value: $${(totalSolPosition * solPrice).toFixed(0)}`);
-    console.log(`Effective Leverage: ${((totalSolPosition * solPrice) / accountValue).toFixed(1)}x`);
-    console.log();
-    console.log('---'.repeat(20));
-    console.log();
+  } catch (error) {
+    console.error('Error:', error.message);
   }
-
-  console.log('CURRENT BUG ANALYSIS:');
-  console.log('The current code calculates position size as:');
-  console.log('  positionSize = accountValue * (entryPercentage / 100) * leverage');
-  console.log('  sizeInAsset = positionSize / currentPrice');
-  console.log();
-  console.log('This means:');
-  console.log('- For 15% of $1000 account at 4x leverage = $600 position');
-  console.log('- At $140 SOL price = 4.29 SOL position');
-  console.log('- This is CORRECT behavior for leveraged trading');
-  console.log();
-  console.log('The 4.88 SOL position suggests:');
-  console.log('- Account value was around $1140 when position opened');
-  console.log('- Or there was additional capital from existing positions');
-
-  console.log('\n=== RECOMMENDATION ===');
-  console.log('The position sizing logic appears CORRECT for leveraged trading.');
-  console.log('The confusion may be in understanding that:');
-  console.log('1. Pyramid percentages (15%) are of TOTAL account value');
-  console.log('2. Leverage (4x) amplifies the position size');
-  console.log('3. A 15% allocation at 4x leverage = 60% effective exposure');
-  console.log();
-  console.log('Need to verify actual account balance at time of trade.');
 }
 
-calculateExpectedPositionSize().catch(console.error);
+testWebhookSystem();

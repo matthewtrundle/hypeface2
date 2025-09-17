@@ -81,6 +81,16 @@ export class HyperliquidClient {
         this.wallet!.address
       );
 
+      // DEBUG: Log all available balance information
+      logger.info('💰 HYPERLIQUID BALANCE DEBUG', {
+        accountValue: clearinghouseState.marginSummary.accountValue,
+        totalMarginUsed: clearinghouseState.marginSummary.totalMarginUsed,
+        totalNtlPos: clearinghouseState.marginSummary.totalNtlPos,
+        totalRawUsd: clearinghouseState.marginSummary.totalRawUsd,
+        withdrawable: clearinghouseState.withdrawable,
+        fullMarginSummary: clearinghouseState.marginSummary
+      });
+
       const accountValue = parseFloat(clearinghouseState.marginSummary.accountValue);
       return accountValue;
     } catch (error: any) {
@@ -110,6 +120,33 @@ export class HyperliquidClient {
       }));
     } catch (error: any) {
       logger.error('Failed to get positions', { error: error.message });
+      throw error;
+    }
+  }
+
+  async setLeverage(coin: string, leverageMode: 'cross' | 'isolated', leverage: number): Promise<any> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      logger.info(`Setting leverage for ${coin}`, { leverageMode, leverage });
+
+      const updateLeverageResult = await this.client.exchange.updateLeverage({
+        asset: coin === 'SOL-PERP' ? 3 : undefined, // SOL is asset index 3
+        isCross: leverageMode === 'cross',
+        leverage: leverage
+      });
+
+      logger.info('Leverage updated successfully', { result: updateLeverageResult });
+      return updateLeverageResult;
+    } catch (error: any) {
+      logger.error('Failed to update leverage', {
+        error: error.message,
+        coin,
+        leverageMode,
+        leverage
+      });
       throw error;
     }
   }

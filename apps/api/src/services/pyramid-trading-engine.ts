@@ -9,12 +9,13 @@ import { WebSocketService } from './websocket';
 
 export interface PyramidConfig {
   // Pyramid settings
-  entryPercentages: number[];    // [40, 30, 20, 10]
-  exitPercentages: number[];     // [40, 30, 20, 10]
-  leverageLevels: number[];      // [3, 4, 5, 5]
+  marginPercentages: number[];   // [10, 15, 20, 25] - % of account to use as margin
+  exitPercentages: number[];     // [25, 25, 25, 25] - % of position to exit
+  fixedLeverage: number;         // 5 - Fixed leverage for all positions
 
   // Risk management
   maxPyramidLevels: number;      // 4
+  maxAccountExposure: number;    // 0.70 - Never use more than 70% of account
   stopLossPercentage: number;    // 10% (wider for pyramiding)
   trailingStopPercentage: number; // 5%
 
@@ -25,15 +26,19 @@ export interface PyramidConfig {
 
 interface PyramidState {
   symbol: string;
-  entryCount: number;
+  currentLevel: number;       // 0-3, which pyramid level we're at
   exitCount: number;
-  currentSize: number;
-  averageEntry: number;
-  totalCapitalUsed: number;
+  totalSize: number;          // Total position size
+  currentSize: number;        // Current position size (same as totalSize, kept for compatibility)
+  averageEntryPrice: number;
+  averageEntry: number;       // Alias for averageEntryPrice
+  entryCount: number;         // Number of entries made
+  totalMarginUsed: number;    // Total margin committed
+  isActive: boolean;
   positions: Array<{
     size: number;
     entry: number;
-    leverage: number;
+    marginUsed: number;
     timestamp: Date;
   }>;
 }
@@ -55,27 +60,27 @@ export class PyramidTradingEngine {
     // Load pyramid configuration from environment with style presets
     const pyramidStyle = process.env.PYRAMID_STYLE || 'increasing'; // 'increasing', 'decreasing', or 'custom'
 
-    // Define preset configurations
+    // Define preset configurations with FIXED leverage
     const presets = {
-      increasing: {
-        entryPercentages: [15, 25, 30, 30],
+      moderate: {
+        marginPercentages: [10, 15, 20, 25],  // Total: 70% of account
         exitPercentages: [25, 25, 25, 25],
-        leverageLevels: [4, 6, 8, 10]
-      },
-      decreasing: {
-        entryPercentages: [40, 30, 20, 10],
-        exitPercentages: [40, 30, 20, 10],
-        leverageLevels: [10, 8, 6, 4]
-      },
-      equal: {
-        entryPercentages: [25, 25, 25, 25],
-        exitPercentages: [25, 25, 25, 25],
-        leverageLevels: [7, 7, 7, 7]
+        fixedLeverage: 5
       },
       conservative: {
-        entryPercentages: [10, 15, 20, 25],
+        marginPercentages: [5, 10, 15, 20],   // Total: 50% of account
         exitPercentages: [25, 25, 25, 25],
-        leverageLevels: [3, 4, 5, 6]
+        fixedLeverage: 5
+      },
+      aggressive: {
+        marginPercentages: [15, 20, 25, 30],  // Total: 90% of account
+        exitPercentages: [25, 25, 25, 25],
+        fixedLeverage: 5
+      },
+      equal: {
+        marginPercentages: [15, 15, 15, 15],  // Total: 60% of account
+        exitPercentages: [25, 25, 25, 25],
+        fixedLeverage: 5
       }
     };
 
@@ -83,17 +88,18 @@ export class PyramidTradingEngine {
     let selectedConfig;
     if (pyramidStyle === 'custom') {
       selectedConfig = {
-        entryPercentages: (process.env.PYRAMID_ENTRY_PERCENTAGES || '15,25,30,30').split(',').map(Number),
+        marginPercentages: (process.env.PYRAMID_MARGIN_PERCENTAGES || '10,15,20,25').split(',').map(Number),
         exitPercentages: (process.env.PYRAMID_EXIT_PERCENTAGES || '25,25,25,25').split(',').map(Number),
-        leverageLevels: (process.env.PYRAMID_LEVERAGE_LEVELS || '4,6,8,10').split(',').map(Number)
+        fixedLeverage: Number(process.env.FIXED_LEVERAGE || '5')
       };
     } else {
-      selectedConfig = presets[pyramidStyle as keyof typeof presets] || presets.increasing;
+      selectedConfig = presets[pyramidStyle as keyof typeof presets] || presets.moderate;
     }
 
     this.config = {
       ...selectedConfig,
       maxPyramidLevels: parseInt(process.env.MAX_PYRAMID_LEVELS || '4'),
+      maxAccountExposure: parseFloat(process.env.MAX_ACCOUNT_EXPOSURE || '0.70'),
       stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || '10'),
       trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || '5'),
       resetAfterFullExit: process.env.RESET_AFTER_FULL_EXIT !== 'false',
@@ -153,15 +159,19 @@ export class PyramidTradingEngine {
 
         const state: PyramidState = {
           symbol,
+          currentLevel: 1,
           entryCount: 1, // Assume at least one entry
           exitCount: 0,
+          totalSize: size,
           currentSize: size,
+          averageEntryPrice: avgEntry,
           averageEntry: avgEntry,
-          totalCapitalUsed: size * avgEntry,
+          totalMarginUsed: size * avgEntry / this.config.fixedLeverage,
+          isActive: true,
           positions: [{
-            size: size * avgEntry,
+            size: size,
             entry: avgEntry,
-            leverage: 3, // Default leverage, could be stored in metadata
+            marginUsed: size * avgEntry / this.config.fixedLeverage,
             timestamp: position.openedAt
           }]
         };
@@ -297,7 +307,7 @@ export class PyramidTradingEngine {
     state: PyramidState
   ): Promise<void> {
     // Check if we can add more pyramid levels
-    if (state.entryCount >= this.config.maxPyramidLevels) {
+    if (state.currentLevel >= this.config.maxPyramidLevels) {
       logger.info(`Max pyramid level (${this.config.maxPyramidLevels}) reached for ${signal.symbol}`);
       return;
     }
@@ -308,21 +318,49 @@ export class PyramidTradingEngine {
 
     const accountValue = await this.hyperliquidClient!.getAccountValue();
 
-    // Calculate position size for this pyramid level WITH LEVERAGE
-    const entryPercentage = this.config.entryPercentages[state.entryCount];
-    const leverage = this.config.leverageLevels[state.entryCount];
-    const positionSize = accountValue * (entryPercentage / 100) * leverage; // Apply leverage!
-    const currentPrice = signal.price || await this.hyperliquidClient!.getMarketPrice(signal.symbol);
+    // Check if we would exceed max exposure
+    const marginPercentage = this.config.marginPercentages[state.currentLevel];
+    const marginToUse = accountValue * (marginPercentage / 100);
+
+    if ((state.totalMarginUsed + marginToUse) > (accountValue * this.config.maxAccountExposure)) {
+      logger.warn(`Would exceed max account exposure (${this.config.maxAccountExposure * 100}%)`, {
+        currentMargin: state.totalMarginUsed,
+        newMargin: marginToUse,
+        totalWouldBe: state.totalMarginUsed + marginToUse,
+        maxAllowed: accountValue * this.config.maxAccountExposure
+      });
+      return;
+    }
+
+    // Calculate position size with FIXED leverage
+    const positionValue = marginToUse * this.config.fixedLeverage;
+
+    logger.info('📊 POSITION SIZING', {
+      accountValue: `$${accountValue.toFixed(2)}`,
+      pyramidLevel: state.currentLevel + 1,
+      marginPercentage: `${marginPercentage}%`,
+      marginToUse: `$${marginToUse.toFixed(2)}`,
+      fixedLeverage: `${this.config.fixedLeverage}x`,
+      positionValue: `$${positionValue.toFixed(2)}`
+    })
+
+    // Get actual market price - NEVER trust the webhook price
+    let currentPrice = await this.hyperliquidClient!.getMarketPrice(signal.symbol);
+    logger.info(`Fetched market price for ${signal.symbol}: $${currentPrice}`);
+
     // Round to 2 decimal places for SOL-PERP (Hyperliquid requirement)
-    const rawSize = positionSize / currentPrice;
+    const rawSize = positionValue / currentPrice;
     const sizeInAsset = Math.floor(rawSize * 100) / 100;
 
-    logger.info(`Adding pyramid level ${state.entryCount + 1}`, {
+    logger.info(`Adding pyramid level ${state.currentLevel + 1}`, {
       symbol: signal.symbol,
-      size: positionSize,
-      leverage,
-      entryPercentage
+      currentPrice: `$${currentPrice.toFixed(2)}`,
+      size: `${sizeInAsset} SOL`,
+      positionValue: `$${positionValue.toFixed(2)}`
     });
+
+    // NOTE: Leverage should be set manually on Hyperliquid to 5x
+    // We're not setting it programmatically anymore
 
     // Place the order on Hyperliquid with proper tick size rounding
     const tickSize = 0.05; // SOL-PERP tick size
@@ -354,19 +392,20 @@ export class PyramidTradingEngine {
 
     // Update pyramid state
     const newPosition = {
-      size: positionSize,
-      entry: signal.price,
-      leverage,
+      size: sizeInAsset,
+      entry: currentPrice,
+      marginUsed: marginToUse,
       timestamp: new Date()
     };
 
     state.positions.push(newPosition);
-    state.entryCount++;
-    state.currentSize += sizeInAsset;
-    state.totalCapitalUsed += positionSize;
+    state.currentLevel++;
+    state.totalSize += sizeInAsset;
+    state.totalMarginUsed += marginToUse;
+    state.isActive = true;
 
     // Calculate new average entry
-    state.averageEntry = this.calculateAverageEntry(state.positions);
+    state.averageEntryPrice = this.calculateAverageEntry(state.positions);
 
     // Store signal in database
     await this.prisma.signal.create({
@@ -376,10 +415,11 @@ export class PyramidTradingEngine {
         action: signal.action,
         strategy: signal.strategy,
         metadata: {
-          pyramidLevel: state.entryCount,
-          size: positionSize,
+          pyramidLevel: state.currentLevel,
+          size: positionValue,
           sizeInAsset,
-          leverage,
+          marginUsed: marginToUse,
+          fixedLeverage: this.config.fixedLeverage,
           orderResult
         } as any
       }
@@ -388,61 +428,79 @@ export class PyramidTradingEngine {
     // Create or update position in database
     await this.updatePositionInDatabase(userId, signal.symbol, state);
 
-    logger.info(`Pyramid level ${state.entryCount} added successfully`, {
+    logger.info(`Pyramid level ${state.currentLevel} added successfully`, {
       symbol: signal.symbol,
-      totalSize: state.currentSize,
-      averageEntry: state.averageEntry
+      totalSize: state.totalSize,
+      averageEntry: state.averageEntryPrice
     });
   }
 
   /**
    * Handle sell signal - reduce pyramid position
+   * SIMPLIFIED: Just check Hyperliquid and sell 25% of whatever position exists
    */
   private async handleSellSignal(
     signal: TradingSignal,
     userId: string,
     state: PyramidState
   ): Promise<void> {
-    // Check if we have a position to reduce
-    if (state.currentSize === 0) {
-      // Double-check by querying Hyperliquid directly
-      logger.info(`No position in state for ${signal.symbol}, checking Hyperliquid...`);
+    // ALWAYS check Hyperliquid directly for the actual position
+    logger.info(`Checking Hyperliquid for ${signal.symbol} position...`);
 
-      const positions = await this.hyperliquidClient!.getPositions();
-      const hlPosition = positions.find(p => p.coin === signal.symbol);
+    const positions = await this.hyperliquidClient!.getPositions();
+    const hlPosition = positions.find(p => p.coin === signal.symbol);
 
-      if (!hlPosition || Math.abs(parseFloat(hlPosition.szi)) < 0.0001) {
-        logger.info(`No position found on Hyperliquid for ${signal.symbol}`);
-        return;
-      }
-
-      // Position exists on Hyperliquid but not in our state, sync it
-      logger.info(`Found position on Hyperliquid for ${signal.symbol}, syncing state...`, {
-        size: hlPosition.szi,
-        entry: hlPosition.entryPx
-      });
-
-      state.currentSize = Math.abs(parseFloat(hlPosition.szi));
-      state.averageEntry = parseFloat(hlPosition.entryPx) || 0;
-      state.entryCount = 1;
-      state.positions = [{
-        size: state.currentSize * state.averageEntry,
-        entry: state.averageEntry,
-        leverage: 3,
-        timestamp: new Date()
-      }];
+    if (!hlPosition || Math.abs(parseFloat(hlPosition.szi)) < 0.0001) {
+      logger.info(`No position found on Hyperliquid for ${signal.symbol}, nothing to sell`);
+      return;
     }
 
-    // Calculate exit size for this level
-    const exitPercentage = this.config.exitPercentages[Math.min(state.exitCount, this.config.exitPercentages.length - 1)];
-    const rawExitSize = state.currentSize * (exitPercentage / 100);
-    // Round to 2 decimal places for SOL-PERP
-    const exitSize = Math.floor(rawExitSize * 100) / 100;
+    // We have a position! Get its size
+    const currentSize = Math.abs(parseFloat(hlPosition.szi));
+    const entryPrice = parseFloat(hlPosition.entryPx);
 
-    logger.info(`Reducing position by ${exitPercentage}%`, {
+    logger.info(`Found ${signal.symbol} position on Hyperliquid`, {
+      size: currentSize,
+      entryPrice: entryPrice,
+      positionValue: currentSize * entryPrice
+    });
+
+    // SIMPLE STRATEGY: First sell 50%, second sell closes everything
+    // Track if this is first or second sell using a simple counter in Redis
+    const sellCountKey = `sell_count:${signal.symbol}:${userId}`;
+    let sellCount = 1;
+
+    if (this.redis) {
+      const count = await this.redis.get(sellCountKey);
+      sellCount = count ? parseInt(count) + 1 : 1;
+      await this.redis.set(sellCountKey, sellCount.toString(), 'EX', 3600); // Reset after 1 hour
+    }
+
+    // Determine exit size based on sell count
+    let exitSize: number;
+    if (sellCount === 1) {
+      // First sell: 50% of position
+      const rawExitSize = currentSize * 0.5;
+      exitSize = Math.floor(rawExitSize * 100) / 100;
+      logger.info('First sell signal - selling 50% of position', { exitSize });
+    } else {
+      // Second or subsequent sell: close entire position
+      exitSize = currentSize;
+      logger.info('Second sell signal - closing entire position', { exitSize });
+
+      // Reset counter after closing position
+      if (this.redis) {
+        await this.redis.del(sellCountKey);
+      }
+    }
+
+    logger.info(`Executing sell strategy`, {
       symbol: signal.symbol,
-      exitSize,
-      currentSize: state.currentSize
+      sellNumber: sellCount,
+      currentSize: currentSize,
+      exitSize: exitSize,
+      remainingSize: (currentSize - exitSize),
+      action: sellCount === 1 ? 'Selling 50%' : 'Closing position'
     });
 
     // Get current price if not provided
@@ -452,51 +510,52 @@ export class PyramidTradingEngine {
     const tickSize = 0.05; // SOL-PERP tick size
     const limitPrice = Math.round((currentPrice * 0.999) / tickSize) * tickSize;
 
+    // Place market order to reduce position
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
       is_buy: false,
       sz: exitSize,
-      limit_px: limitPrice,
-      order_type: 'limit',
+      order_type: 'market', // Use market order for immediate execution
       reduce_only: true // Important: this reduces the position
     };
 
+    logger.info('Placing SELL order', orderRequest);
+
     const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
 
-    // Update pyramid state
-    state.exitCount++;
-    state.currentSize -= exitSize;
+    if (orderResult.status === 'ok') {
+      logger.info('✅ SELL order executed successfully', {
+        symbol: signal.symbol,
+        exitSize: exitSize,
+        orderResult: orderResult.response
+      });
+    } else {
+      logger.error('❌ SELL order failed', {
+        symbol: signal.symbol,
+        error: orderResult.error
+      });
+      throw new Error(`Order failed: ${orderResult.error}`);
+    }
 
-    // Calculate profit for this exit
-    const profit = (signal.price - state.averageEntry) * exitSize;
-
-    // Store signal in database
-    await this.prisma.signal.create({
+    // Store trade record in database
+    await this.prisma.trade.create({
       data: {
         userId,
+        signalId: signal.id,
         symbol: signal.symbol,
-        action: signal.action,
-        strategy: signal.strategy,
-        metadata: {
-          exitLevel: state.exitCount,
-          size: exitSize,
-          profit,
-          orderResult
-        } as any
+        side: 'sell',
+        type: 'market',
+        size: exitSize,
+        price: signal.price,
+        executedAt: new Date(),
+        status: 'executed'
       }
     });
 
-    // Update position in database
-    await this.updatePositionInDatabase(userId, signal.symbol, state);
-
-    // Check if position is fully closed
-    if (state.currentSize <= 0.0001 || state.exitCount >= this.config.exitPercentages.length) {
-      logger.info(`Position fully closed for ${signal.symbol}`);
-
-      if (this.config.resetAfterFullExit) {
-        // Reset pyramid state for next cycle
-        this.pyramidStates.delete(signal.symbol);
-      }
+    // Simple check: if remaining position is tiny, consider it closed
+    const remainingSize = currentSize - exitSize;
+    if (remainingSize <= 0.01) {
+      logger.info(`Position essentially closed for ${signal.symbol} (remaining: ${remainingSize})`);
 
       // Mark position as closed in database
       await this.prisma.position.updateMany({
@@ -514,8 +573,8 @@ export class PyramidTradingEngine {
 
     logger.info(`Position reduced successfully`, {
       symbol: signal.symbol,
-      remainingSize: state.currentSize,
-      exitLevel: state.exitCount
+      soldSize: exitSize,
+      remainingSize: remainingSize
     });
   }
 
@@ -526,11 +585,15 @@ export class PyramidTradingEngine {
     if (!this.pyramidStates.has(symbol)) {
       this.pyramidStates.set(symbol, {
         symbol,
+        currentLevel: 0,
         entryCount: 0,
         exitCount: 0,
+        totalSize: 0,
         currentSize: 0,
+        averageEntryPrice: 0,
         averageEntry: 0,
-        totalCapitalUsed: 0,
+        totalMarginUsed: 0,
+        isActive: true,
         positions: []
       });
     }

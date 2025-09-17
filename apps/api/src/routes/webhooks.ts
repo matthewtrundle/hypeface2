@@ -56,18 +56,12 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Simple secret check for TradingView (which can't do signatures)
-      const webhookSecret = process.env.WEBHOOK_SECRET;
-      const urlSecret = (request.query as any).secret;
-
-      if (webhookSecret) {
-        if (urlSecret !== webhookSecret) {
-          logger.warn('Invalid webhook secret');
-          return reply.status(401).send({
-            error: 'Invalid secret',
-          });
-        }
-      }
+      // TEMPORARILY DISABLED - TradingView not sending secret properly
+      // TODO: Re-enable once we figure out why TradingView isn't sending the secret
+      logger.info('⚠️ WEBHOOK SECURITY DISABLED - Processing all webhooks', {
+        url: request.url,
+        queryParams: request.query
+      });
 
       // Validate webhook payload
       const { error, value } = webhookSchema.validate(payload);

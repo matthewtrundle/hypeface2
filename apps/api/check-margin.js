@@ -1,102 +1,92 @@
-// Direct webhook testing with proper payload
 require('dotenv').config();
+const { HyperliquidClient } = require('./dist/services/hyperliquid-client');
 
-const WEBHOOK_URL = 'https://hypeface-production.up.railway.app/webhooks/tradingview';
-const SECRET = '3e8e55210be930325825be0b2b204f43f558baec';
-
-async function sendTestSignal(action, notes = '') {
-  const payload = {
-    action: action,
-    symbol: 'SOL-PERP',
-    price: action === 'buy' ? 140.50 : 141.50,
-    strategy: `test-pyramid-${action}`,
-    timestamp: Date.now(),
-    metadata: {
-      test: true,
-      notes: notes || `Test ${action} signal`,
-      userId: 'test-user' // Try providing userId in metadata
-    }
-  };
-
-  console.log(`\n🚀 Sending ${action.toUpperCase()} signal...`);
-  console.log('Payload:', JSON.stringify(payload, null, 2));
-
-  const response = await fetch(`${WEBHOOK_URL}?secret=${SECRET}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const result = await response.text();
-  console.log(`Status: ${response.status}`);
-  console.log('Response:', result);
-
-  return { status: response.status, body: result };
-}
-
-async function runTests() {
-  console.log('=== PYRAMID TRADING BOT TEST SUITE ===');
-  console.log(`Bot URL: ${WEBHOOK_URL}`);
-  console.log(`Secret: ${SECRET.substring(0, 8)}...`);
-  console.log();
-
+async function checkAccountDetails() {
   try {
-    // Test 1: Single BUY signal (Level 1)
-    console.log('📊 TEST 1: First BUY signal (Pyramid Level 1)');
-    const buy1 = await sendTestSignal('buy', 'First pyramid entry - expect 15% @ 4x leverage');
+    console.log('=== CHECKING HYPERLIQUID ACCOUNT DETAILS ===');
 
-    if (buy1.status === 200) {
-      console.log('✅ BUY signal sent successfully');
+    const client = new HyperliquidClient({
+      privateKey: process.env.WALLET_PRIVATE_KEY,
+      isTestnet: false
+    });
 
-      // Wait a bit before next signal
-      console.log('⏱️  Waiting 3 seconds before next signal...');
-      await new Promise(resolve => setTimeout(resolve, 3000));
+    await client.initialize();
+    console.log('Client initialized');
+    console.log('Wallet address:', client.getWalletAddress());
 
-      // Test 2: Second BUY signal (Level 2)
-      console.log('\n📊 TEST 2: Second BUY signal (Pyramid Level 2)');
-      const buy2 = await sendTestSignal('buy', 'Second pyramid entry - expect 25% @ 6x leverage');
+    // Get account value using our function
+    const accountValue = await client.getAccountValue();
+    console.log('\n📊 Account Value from getAccountValue():', `$${accountValue.toFixed(2)}`);
 
-      if (buy2.status === 200) {
-        console.log('✅ Second BUY signal sent successfully');
+    // Now let's get the raw clearinghouse state
+    const { Hyperliquid } = require('@nktkas/hyperliquid');
+    const directClient = new Hyperliquid({
+      privateKey: process.env.WALLET_PRIVATE_KEY,
+      testnet: false
+    });
 
-        // Wait before sell
-        console.log('⏱️  Waiting 3 seconds before SELL signal...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+    const clearinghouseState = await directClient.info.perpetuals.getClearinghouseState(
+      client.getWalletAddress()
+    );
 
-        // Test 3: SELL signal (Reduce position)
-        console.log('\n📊 TEST 3: SELL signal (Pyramid Exit Level 1)');
-        const sell1 = await sendTestSignal('sell', 'First pyramid exit - expect 25% position reduction');
+    console.log('\n💰 FULL MARGIN SUMMARY:');
+    console.log('  Account Value:', clearinghouseState.marginSummary.accountValue);
+    console.log('  Total Margin Used:', clearinghouseState.marginSummary.totalMarginUsed);
+    console.log('  Total Ntl Pos:', clearinghouseState.marginSummary.totalNtlPos);
+    console.log('  Total Raw USD:', clearinghouseState.marginSummary.totalRawUsd);
+    console.log('  Withdrawable:', clearinghouseState.withdrawable);
 
-        if (sell1.status === 200) {
-          console.log('✅ SELL signal sent successfully');
-        } else {
-          console.log('❌ SELL signal failed');
-        }
-      } else {
-        console.log('❌ Second BUY signal failed');
-      }
+    // Check cross margin state
+    console.log('\n🔄 CROSS MARGIN SUMMARY:');
+    if (clearinghouseState.crossMarginSummary) {
+      console.log('  Account Value:', clearinghouseState.crossMarginSummary.accountValue);
+      console.log('  Total Margin Used:', clearinghouseState.crossMarginSummary.totalMarginUsed);
+      console.log('  Total Ntl Pos:', clearinghouseState.crossMarginSummary.totalNtlPos);
+      console.log('  Total Raw USD:', clearinghouseState.crossMarginSummary.totalRawUsd);
     } else {
-      console.log('❌ First BUY signal failed');
-      console.log('Cannot continue with pyramid tests');
+      console.log('  No cross margin data');
+    }
+
+    // Calculate what position sizes should be
+    console.log('\n📈 EXPECTED POSITION SIZES:');
+    const pyramidConfig = {
+      entryPercentages: [15, 25, 30, 30],
+      leverageLevels: [4, 6, 8, 10]
+    };
+
+    const solPrice = 140; // Approximate
+    for (let i = 0; i < 4; i++) {
+      const percentage = pyramidConfig.entryPercentages[i];
+      const leverage = pyramidConfig.leverageLevels[i];
+      const marginToUse = accountValue * (percentage / 100);
+      const positionValue = marginToUse * leverage;
+      const solSize = positionValue / solPrice;
+
+      console.log(`  Level ${i + 1}: ${percentage}% @ ${leverage}x`);
+      console.log(`    Margin: $${marginToUse.toFixed(2)}`);
+      console.log(`    Position Value: $${positionValue.toFixed(2)}`);
+      console.log(`    SOL Size: ${solSize.toFixed(2)} SOL`);
+    }
+
+    // Get current positions
+    const positions = await client.getPositions();
+    console.log('\n📍 CURRENT POSITIONS:');
+    if (positions.length > 0) {
+      positions.forEach(pos => {
+        console.log(`  ${pos.coin}:`);
+        console.log(`    Size: ${pos.szi}`);
+        console.log(`    Entry: ${pos.entryPx}`);
+        console.log(`    Mark: ${pos.markPx}`);
+        console.log(`    Margin Used: ${pos.marginUsed}`);
+        console.log(`    Position Value: $${(parseFloat(pos.szi) * parseFloat(pos.markPx)).toFixed(2)}`);
+      });
+    } else {
+      console.log('  No open positions');
     }
 
   } catch (error) {
-    console.error('❌ Test suite failed:', error.message);
+    console.error('Error:', error);
   }
-
-  console.log('\n=== VERIFICATION STEPS ===');
-  console.log('1. Check Hyperliquid testnet portfolio:');
-  console.log('   https://app.hyperliquid-testnet.xyz/portfolio/0x3D57aF0FeccD210726B5C94E71C6596251EF1339');
-  console.log('2. Check Railway logs for processing details');
-  console.log('3. Monitor position sizes and pyramid levels');
-  console.log('4. Verify leverage and exposure calculations');
 }
 
-// Add fetch polyfill if needed
-if (typeof fetch === 'undefined') {
-  global.fetch = require('node-fetch');
-}
-
-runTests().catch(console.error);
+checkAccountDetails();
