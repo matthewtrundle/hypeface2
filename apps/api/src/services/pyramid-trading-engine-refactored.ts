@@ -44,7 +44,7 @@ interface PyramidState {
   lastSyncTime?: Date;        // Track last sync time
 }
 
-export class PyramidTradingEngine {
+export class PyramidTradingEngineRefactored {
   private isProcessing = false;
   private hyperliquidClient: HyperliquidClient | null = null;
   private walletManager: WalletManager;

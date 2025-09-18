@@ -1,12 +1,14 @@
 {
   "name": "@hype/api",
-  "version": "1.0.0",
+  "version": "1.0.0-20250917-195242",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/app.ts",
     "build": "tsc",
+    "build:deploy": "prisma generate && tsc",
     "start": "tsx src/app.ts",
-    "start:prod": "tsx src/app.ts",
+    "start:prod": "node -r dotenv/config dist/app.js || tsx src/app.ts",
+    "start:tsx": "tsx src/app.ts",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
     "test": "jest",
@@ -14,7 +16,9 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "deploy": "./scripts/deploy-with-version.sh",
+    "deploy:check": "curl -s $(railway domain)/health | jq ."
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
