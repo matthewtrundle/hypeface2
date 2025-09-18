@@ -74,6 +74,7 @@ async function main() {
     const { authRoutes } = await import('./routes/auth');
     const { dashboardRoutes } = await import('./routes/dashboard');
     const { webhookRoutes } = await import('./routes/webhooks');
+    const { versionRoutes } = await import('./routes/version');
     const { PyramidTradingEngine } = await import('./services/pyramid-trading-engine');
     const { WebSocketService } = await import('./services/websocket');
     const { Server } = await import('socket.io');
@@ -83,6 +84,7 @@ async function main() {
     await app.register(authRoutes, { prefix: '/auth' });
     await app.register(dashboardRoutes, { prefix: '/api' });
     await app.register(webhookRoutes, { prefix: '/webhooks' });
+    await app.register(versionRoutes);
 
     // Setup WebSocket
     const server = createServer();

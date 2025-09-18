@@ -1,6 +1,6 @@
 {
   "name": "@hype/api",
-  "version": "1.0.0-20250917-195242",
+  "version": "1.0.0-20250917-205749",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/app.ts",
