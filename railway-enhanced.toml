@@ -1,0 +1,46 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm run build:deploy"
+
+[deploy]
+startCommand = "npm run start:prod"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health/ready"
+healthcheckTimeout = 30
+healthcheckInterval = 30
+
+[environments.production]
+region = "eu-west1"  # Amsterdam - No Hyperliquid restrictions
+
+[build.environment]
+NODE_ENV = "production"
+NPM_CONFIG_PRODUCTION = "false"
+BUILD_VERSION = "$RAILWAY_DEPLOYMENT_ID"
+BUILD_TIME = "$RAILWAY_DEPLOYMENT_CREATED_AT"
+COMMIT_SHA = "$RAILWAY_GIT_COMMIT_SHA"
+
+[deploy.environment]
+NODE_ENV = "production"
+PORT = "3001"
+BUILD_VERSION = "$RAILWAY_DEPLOYMENT_ID"
+DEPLOYMENT_ID = "$RAILWAY_DEPLOYMENT_ID"
+
+# Cache control
+[build.cache]
+enabled = false  # Disable build cache to ensure fresh builds
+
+# Resource limits
+[deploy.resources]
+memory = "512Mi"
+cpu = "0.5"
+
+# Scaling
+[deploy.scaling]
+minReplicas = 1
+maxReplicas = 1
+
+# Networking
+[deploy.networking]
+internal = false
+timeout = 60
