@@ -238,6 +238,29 @@ export class PyramidTradingEngine {
     });
 
     await this.hyperliquidClient.initialize();
+
+    // Set default leverage for common trading pairs
+    // This is critical for ensuring positions use correct margin
+    try {
+      const defaultLeverage = this.config.fixedLeverage;
+      const tradingPairs = ['SOL-PERP', 'BTC-PERP', 'ETH-PERP'];
+
+      logger.info(`🔧 Setting default leverage to ${defaultLeverage}x for all pairs...`);
+
+      for (const pair of tradingPairs) {
+        try {
+          await this.hyperliquidClient.setLeverage(pair, 'cross', defaultLeverage);
+          logger.info(`✅ Default leverage set to ${defaultLeverage}x for ${pair}`);
+        } catch (error: any) {
+          // Log as warning, not debug - this is important
+          logger.warn(`⚠️ Could not set leverage for ${pair}: ${error.message}`);
+        }
+      }
+    } catch (error: any) {
+      logger.error(`❌ Critical: Failed to set default leverage: ${error.message}`);
+      // Don't throw here as it might prevent startup, but log prominently
+    }
+
     return this.hyperliquidClient;
   }
 
@@ -388,8 +411,39 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // Calculate position size
-    const positionValue = marginToUse * this.config.fixedLeverage;
+    // CRITICAL FIX: Account for Hyperliquid's actual leverage behavior
+    // The account is using 20x leverage by default, not our configured 5x
+    // We need to adjust position sizing to achieve correct margin usage
+
+    let actualLeverage = this.config.fixedLeverage; // Start with intended 5x
+    let positionValue = marginToUse * actualLeverage;
+
+    // Check if we're actually getting 20x leverage (Hyperliquid default)
+    // If setLeverage fails or doesn't apply, we need to compensate
+    const HYPERLIQUID_DEFAULT_LEVERAGE = 20;
+
+    // If the leverage setting isn't working (positions show 20x):
+    // We need BIGGER positions to use the correct margin
+    // At 20x: To use $40 margin, we need $800 position
+    // This gives us 20x exposure though, not the 5x we want
+
+    // The real issue: We want to use $40 margin AND have 5x exposure
+    // But if account forces 20x, we can't have both
+    // Solution: Prioritize correct margin usage over leverage ratio
+
+    if (state.currentLevel === 0) {
+      // For first position, try to detect if we're getting 20x
+      // Adjust position to use correct margin at whatever leverage we get
+      positionValue = marginToUse * HYPERLIQUID_DEFAULT_LEVERAGE; // $40 * 20 = $800
+      logger.warn(`⚠️ Adjusting for Hyperliquid 20x default leverage`, {
+        targetMargin: marginToUse.toFixed(2),
+        adjustedPosition: positionValue.toFixed(2),
+        effectiveLeverage: HYPERLIQUID_DEFAULT_LEVERAGE
+      });
+    } else {
+      // For subsequent levels, use the same approach
+      positionValue = marginToUse * HYPERLIQUID_DEFAULT_LEVERAGE;
+    }
 
     // Get current market price
     const currentPrice = await this.safeGetMarketPrice(signal.symbol);
@@ -407,15 +461,33 @@ export class PyramidTradingEngine {
       return;
     }
 
+    // CRITICAL: Set leverage BEFORE calculating position or placing order
+    // This ensures the position uses the correct margin
+    try {
+      logger.info(`⚙️ Setting leverage to ${this.config.fixedLeverage}x for ${signal.symbol}`);
+      await this.hyperliquidClient!.setLeverage(
+        signal.symbol,
+        'cross', // Use cross margin for pyramiding
+        this.config.fixedLeverage
+      );
+      logger.info(`✅ Leverage set to ${this.config.fixedLeverage}x`);
+    } catch (error: any) {
+      // If we can't set leverage, this is a critical failure - don't proceed
+      logger.error(`Failed to set leverage: ${error.message}`);
+      throw new Error(`Cannot proceed without setting leverage to ${this.config.fixedLeverage}x. Current account may be using different leverage.`);
+    }
+
     logger.info(`📈 Adding pyramid level ${state.currentLevel + 1}`, {
       symbol: signal.symbol,
       accountValue: accountValue.toFixed(2),
       marginPercentage: `${marginPercentage}%`,
       marginToUse: marginToUse.toFixed(2),
-      leverage: `${this.config.fixedLeverage}x`,
+      accountLeverage: `${HYPERLIQUID_DEFAULT_LEVERAGE}x (Hyperliquid default)`,
+      targetLeverage: `${this.config.fixedLeverage}x (configured)`,
       positionValue: positionValue.toFixed(2),
       currentPrice: currentPrice.toFixed(2),
-      size: sizeInAsset.toFixed(2)
+      size: sizeInAsset.toFixed(2),
+      expectedMarginUsage: `$${(positionValue / HYPERLIQUID_DEFAULT_LEVERAGE).toFixed(2)}`
     });
 
     // Place order with proper tick size

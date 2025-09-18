@@ -132,11 +132,12 @@ export class HyperliquidClient {
     try {
       logger.info(`Setting leverage for ${coin}`, { leverageMode, leverage });
 
-      // Note: updateLeverage method signature may vary by SDK version
+      // The Hyperliquid SDK updateLeverage method signature:
+      // updateLeverage(leverage: number, coin: string, is_cross: boolean)
       const updateLeverageResult = await (this.client.exchange as any).updateLeverage(
-        leverageMode === 'cross',
-        leverage,
-        coin === 'SOL-PERP' ? 3 : undefined // asset index
+        leverage,                     // leverage amount (e.g., 5 for 5x)
+        coin,                        // coin symbol (e.g., 'SOL-PERP')
+        leverageMode === 'cross'     // is_cross: true for cross margin, false for isolated
       );
 
       logger.info('Leverage updated successfully', { result: updateLeverageResult });
@@ -158,19 +159,50 @@ export class HyperliquidClient {
     }
 
     try {
-      // Workaround for SDK bug with null limit_px
+      // Ensure sz is valid
+      if (!order.sz && order.sz !== 0) {
+        throw new Error(`Invalid order size: ${order.sz}`);
+      }
+
+      const formattedSize = typeof order.sz === 'number'
+        ? order.sz.toFixed(8).replace(/\.?0+$/, '') // Remove trailing zeros
+        : order.sz;
+
+      // IMPORTANT: Hyperliquid SDK doesn't have true market orders
+      // Market orders are implemented as aggressive limit orders with Ioc (Immediate or Cancel)
+      // We need to calculate a slippage price for "market" orders
+
+      let limitPrice: number;
+
+      if (order.order_type === 'market') {
+        // For market orders, we need to get the current price and add slippage
+        const currentPrice = await this.getMarketPrice(order.coin);
+        const slippage = 0.05; // 5% slippage for market orders (aggressive to ensure fill)
+
+        // Apply slippage: higher price for buys, lower for sells
+        limitPrice = order.is_buy
+          ? currentPrice * (1 + slippage)
+          : currentPrice * (1 - slippage);
+
+        // Round to appropriate decimals (SOL uses 2 decimals for price)
+        limitPrice = Math.round(limitPrice * 100) / 100;
+
+        logger.info(`Market order: Using slippage price ${limitPrice} (current: ${currentPrice})`);
+      } else if (order.limit_px) {
+        limitPrice = order.limit_px;
+      } else {
+        throw new Error('Limit price required for limit orders');
+      }
+
+      // Build order request according to SDK requirements
       const orderParams: any = {
         coin: order.coin,
         is_buy: order.is_buy,
-        sz: order.sz,
-        order_type: order.order_type === 'market' ? { market: {} } : { limit: { tif: 'Ioc' } }, // Use Ioc for better fills
+        sz: formattedSize,
+        limit_px: limitPrice, // ALWAYS required by SDK
+        order_type: { limit: { tif: 'Ioc' } }, // Use Ioc for market-like behavior
         reduce_only: order.reduce_only || false,
       };
-
-      // Only add limit_px if it's provided and not a market order
-      if (order.order_type === 'limit' && order.limit_px) {
-        orderParams.limit_px = order.limit_px;
-      }
 
       const result = await this.client.exchange.placeOrder(orderParams);
 
@@ -181,7 +213,7 @@ export class HyperliquidClient {
         response: result,
       };
     } catch (error: any) {
-      logger.error('Failed to place order', { error: error.message, order });
+      logger.error('Failed to place order', { error: error.message, stack: error.stack, order });
       return {
         status: 'error',
         error: error.message,
@@ -225,6 +257,11 @@ export class HyperliquidClient {
       const size = Math.abs(parseFloat(position.szi));
       const isBuy = parseFloat(position.szi) < 0; // Buy to close short, sell to close long
 
+      logger.info(`Closing position for ${coin}`, {
+        size: size.toFixed(4),
+        direction: isBuy ? 'buy' : 'sell'
+      });
+
       const result = await this.placeOrder({
         coin,
         is_buy: isBuy,
@@ -236,6 +273,32 @@ export class HyperliquidClient {
       return result.status === 'ok';
     } catch (error: any) {
       logger.error('Failed to close position', { error: error.message, coin });
+      return false;
+    }
+  }
+
+  /**
+   * Alternative method to close position using SDK's marketClose
+   * This handles slippage calculation internally
+   */
+  async closePositionWithMarketClose(coin: string, size?: number, slippage: number = 0.05): Promise<boolean> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      // The SDK's marketClose method handles all the complexity
+      const result = await (this.client as any).custom.marketClose(
+        coin,
+        size,     // optional size, if not provided closes entire position
+        undefined, // optional price
+        slippage  // slippage percentage (0.05 = 5%)
+      );
+
+      logger.info('Position closed using marketClose', { coin, result });
+      return true;
+    } catch (error: any) {
+      logger.error('Failed to close position with marketClose', { error: error.message, coin });
       return false;
     }
   }
