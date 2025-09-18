@@ -483,8 +483,8 @@ export class PyramidTradingEngine {
     const entryPrice = parseFloat(hlPosition.entryPx || '0');
 
     logger.info(`📉 Processing SELL for ${signal.symbol}`, {
-      currentSize: currentSize.toFixed(2),
-      entryPrice: entryPrice.toFixed(2),
+      currentSize: currentSize ? currentSize.toFixed(2) : '0',
+      entryPrice: entryPrice ? entryPrice.toFixed(2) : '0',
       exitCount: state.exitCount
     });
 
@@ -495,14 +495,14 @@ export class PyramidTradingEngine {
       // First sell: 50% of position
       exitSize = Math.floor((currentSize * 0.5) * 100) / 100;
       logger.info('🔸 First sell signal - selling 50%', {
-        currentSize: currentSize.toFixed(2),
-        exitSize: exitSize.toFixed(2)
+        currentSize: currentSize ? currentSize.toFixed(2) : '0',
+        exitSize: exitSize ? exitSize.toFixed(2) : '0'
       });
     } else {
       // Second or subsequent sell: close entire position
       exitSize = currentSize;
       logger.info('🔸 Final sell signal - closing entire position', {
-        exitSize: exitSize.toFixed(2)
+        exitSize: exitSize ? exitSize.toFixed(2) : '0'
       });
     }
 
@@ -530,7 +530,7 @@ export class PyramidTradingEngine {
 
     logger.info('✅ SELL order executed', {
       symbol: signal.symbol,
-      exitSize: exitSize.toFixed(2),
+      exitSize: exitSize ? exitSize.toFixed(2) : '0',
       exitCount: state.exitCount + 1
     });
 
