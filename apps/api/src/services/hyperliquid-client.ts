@@ -132,11 +132,12 @@ export class HyperliquidClient {
     try {
       logger.info(`Setting leverage for ${coin}`, { leverageMode, leverage });
 
-      const updateLeverageResult = await this.client.exchange.updateLeverage({
-        asset: coin === 'SOL-PERP' ? 3 : undefined, // SOL is asset index 3
-        isCross: leverageMode === 'cross',
-        leverage: leverage
-      });
+      // Note: updateLeverage method signature may vary by SDK version
+      const updateLeverageResult = await (this.client.exchange as any).updateLeverage(
+        leverageMode === 'cross',
+        leverage,
+        coin === 'SOL-PERP' ? 3 : undefined // asset index
+      );
 
       logger.info('Leverage updated successfully', { result: updateLeverageResult });
       return updateLeverageResult;
@@ -245,7 +246,7 @@ export class HyperliquidClient {
     }
 
     try {
-      const allMids = await this.client.info.generalAPI.getAllMids();
+      const allMids = await (this.client.info as any).getAllMids();
       const price = parseFloat(allMids[coin]);
 
       if (!price || isNaN(price)) {

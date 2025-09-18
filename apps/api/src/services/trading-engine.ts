@@ -19,6 +19,8 @@ export class TradingEngine {
   private hyperliquidClient: HyperliquidClient | null = null;
   private walletManager: WalletManager;
   private config: TradingConfig;
+  private signalProcessingTimeout?: NodeJS.Timeout;
+  private positionMonitoringInterval?: NodeJS.Timeout;
 
   constructor(
     private prisma: PrismaClient,
@@ -304,11 +306,11 @@ export class TradingEngine {
   }
 
   private async calculatePositionSize(userId: string, symbol: string): Promise<number> {
-    const balance = await this.hyperliquidClient!.getBalance();
-    const currentPrice = await this.hyperliquidClient!.getCurrentPrice(symbol);
+    const accountValue = await this.hyperliquidClient!.getAccountValue();
+    const currentPrice = await this.hyperliquidClient!.getMarketPrice(symbol);
 
     // Use configured percentage of available balance
-    const positionValue = (balance.available * this.config.positionSizePercentage) / 100;
+    const positionValue = (accountValue * this.config.positionSizePercentage) / 100;
 
     // Apply leverage
     const leveragedValue = positionValue * this.config.maxLeverage;
@@ -317,7 +319,7 @@ export class TradingEngine {
     const positionSize = leveragedValue / currentPrice;
 
     logger.info('Position size calculated', {
-      balance: balance.available,
+      accountValue,
       percentage: this.config.positionSizePercentage,
       leverage: this.config.maxLeverage,
       currentPrice,
@@ -364,7 +366,7 @@ export class TradingEngine {
       this.isProcessing = false;
 
       // Schedule next processing
-      setTimeout(() => this.processSignals(), 1000);
+      this.signalProcessingTimeout = setTimeout(() => this.processSignals(), 1000);
     }
   }
 
@@ -381,7 +383,7 @@ export class TradingEngine {
       logger.error('Error monitoring positions', error);
     } finally {
       // Schedule next monitoring
-      setTimeout(() => this.monitorPositions(), 5000);
+      this.positionMonitoringInterval = setTimeout(() => this.monitorPositions(), 5000);
     }
   }
 
@@ -389,7 +391,7 @@ export class TradingEngine {
     try {
       // Initialize Hyperliquid for this user
       const hyperliquid = await this.initializeHyperliquid(position.userId);
-      const currentPrice = await hyperliquid.getCurrentPrice(position.symbol);
+      const currentPrice = await hyperliquid.getMarketPrice(position.symbol);
       const unrealizedPnl = this.calculateUnrealizedPnl(position, currentPrice);
 
       const updatedPosition = await this.prisma.position.update({
@@ -415,6 +417,14 @@ export class TradingEngine {
 
   async stop(): Promise<void> {
     logger.info('Stopping trading engine');
-    // Cleanup tasks if needed
+    // Clear timeouts to prevent memory leaks
+    if (this.signalProcessingTimeout) {
+      clearTimeout(this.signalProcessingTimeout);
+      this.signalProcessingTimeout = undefined;
+    }
+    if (this.positionMonitoringInterval) {
+      clearTimeout(this.positionMonitoringInterval);
+      this.positionMonitoringInterval = undefined;
+    }
   }
 }

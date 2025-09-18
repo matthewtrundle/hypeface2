@@ -3,7 +3,7 @@
 # Pyramid Trading Bot Test Suite for Testnet
 # Run comprehensive tests on the pyramid trading strategy
 
-WEBHOOK_URL="https://hypeface-production.up.railway.app/webhooks/tradingview?secret=3e8e55210be930325825be0b2b204f43f558baec"
+WEBHOOK_URL="https://hypeface-production.up.railway.app/webhooks/tradingview?secret=${WEBHOOK_SECRET:-your_webhook_secret_here}"
 DELAY=10  # Seconds between signals
 
 echo "================================================="

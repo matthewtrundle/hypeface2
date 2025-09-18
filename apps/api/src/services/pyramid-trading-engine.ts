@@ -50,6 +50,9 @@ export class PyramidTradingEngine {
   private walletManager: WalletManager;
   private config: PyramidConfig;
   private pyramidStates: Map<string, PyramidState> = new Map();
+  private signalProcessingInterval?: NodeJS.Timeout;
+  private positionMonitoringInterval?: NodeJS.Timeout;
+  private healthMonitoringInterval?: NodeJS.Timeout;
   private healthCheckData = {
     lastSignalProcessed: null as Date | null,
     lastHealthCheck: new Date(),
@@ -647,12 +650,8 @@ export class PyramidTradingEngine {
       const positionData = {
         size: new Decimal(state.currentSize || 0),
         entryPrice: new Decimal(state.averageEntryPrice || 0),
-        metadata: {
-          pyramidLevel: state.currentLevel,
-          entryCount: state.entryCount,
-          exitCount: state.exitCount,
-          lastSync: state.lastSyncTime?.toISOString()
-        }
+        // Note: pyramid state tracking - no metadata field in schema
+        // TODO: Add metadata field to Position model or track separately
       };
 
       if (existingPosition) {
@@ -725,7 +724,7 @@ export class PyramidTradingEngine {
       return;
     }
 
-    setInterval(async () => {
+    this.signalProcessingInterval = setInterval(async () => {
       if (this.isProcessing) return;
 
       try {
@@ -748,7 +747,7 @@ export class PyramidTradingEngine {
    * Monitor positions with regular Hyperliquid sync
    */
   private async monitorPositions() {
-    setInterval(async () => {
+    this.positionMonitoringInterval = setInterval(async () => {
       try {
         if (!this.hyperliquidClient) return;
 
@@ -826,11 +825,8 @@ export class PyramidTradingEngine {
         where: { id: position.id },
         data: {
           status: 'closed',
-          closedAt: new Date(),
-          metadata: {
-            ...(position.metadata as any || {}),
-            closeReason: 'stop_loss'
-          }
+          closedAt: new Date()
+          // Note: closeReason 'stop_loss' - no metadata field in schema
         }
       });
 
@@ -847,7 +843,7 @@ export class PyramidTradingEngine {
    * Health monitoring for Railway deployment
    */
   private startHealthMonitoring() {
-    setInterval(() => {
+    this.healthMonitoringInterval = setInterval(() => {
       this.healthCheckData.lastHealthCheck = new Date();
     }, 30000); // Update every 30 seconds
   }
@@ -896,5 +892,28 @@ export class PyramidTradingEngine {
    */
   public getStates(): Map<string, PyramidState> {
     return this.pyramidStates;
+  }
+
+  /**
+   * Stop the pyramid trading engine and clean up resources
+   */
+  public async stop(): Promise<void> {
+    logger.info('Stopping pyramid trading engine');
+
+    // Clear all intervals to prevent memory leaks
+    if (this.signalProcessingInterval) {
+      clearInterval(this.signalProcessingInterval);
+      this.signalProcessingInterval = undefined;
+    }
+    if (this.positionMonitoringInterval) {
+      clearInterval(this.positionMonitoringInterval);
+      this.positionMonitoringInterval = undefined;
+    }
+    if (this.healthMonitoringInterval) {
+      clearInterval(this.healthMonitoringInterval);
+      this.healthMonitoringInterval = undefined;
+    }
+
+    logger.info('Pyramid trading engine stopped');
   }
 }

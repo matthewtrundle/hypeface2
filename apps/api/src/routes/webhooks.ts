@@ -130,7 +130,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
           data: {
             status: 'failed',
             metadata: {
-              ...savedSignal.metadata,
+              ...(savedSignal.metadata as any || {}),
               error: processingError.message,
               errorTime: new Date().toISOString()
             }
