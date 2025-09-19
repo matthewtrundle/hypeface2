@@ -411,39 +411,43 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // CRITICAL FIX: Account for Hyperliquid's actual leverage behavior
-    // The account is using 20x leverage by default, not our configured 5x
-    // We need to adjust position sizing to achieve correct margin usage
+    // CRITICAL: Use existing position's leverage instead of trying to change it
+    // Hyperliquid doesn't allow mixed leverage on the same symbol
+    let actualLeverage = 10; // Default to 10x if we can't detect
 
-    let actualLeverage = this.config.fixedLeverage; // Start with intended 5x
-    let positionValue = marginToUse * actualLeverage;
-
-    // Check if we're actually getting 20x leverage (Hyperliquid default)
-    // If setLeverage fails or doesn't apply, we need to compensate
-    const HYPERLIQUID_DEFAULT_LEVERAGE = 20;
-
-    // If the leverage setting isn't working (positions show 20x):
-    // We need BIGGER positions to use the correct margin
-    // At 20x: To use $40 margin, we need $800 position
-    // This gives us 20x exposure though, not the 5x we want
-
-    // The real issue: We want to use $40 margin AND have 5x exposure
-    // But if account forces 20x, we can't have both
-    // Solution: Prioritize correct margin usage over leverage ratio
-
-    if (state.currentLevel === 0) {
-      // For first position, try to detect if we're getting 20x
-      // Adjust position to use correct margin at whatever leverage we get
-      positionValue = marginToUse * HYPERLIQUID_DEFAULT_LEVERAGE; // $40 * 20 = $800
-      logger.warn(`⚠️ Adjusting for Hyperliquid 20x default leverage`, {
-        targetMargin: marginToUse.toFixed(2),
-        adjustedPosition: positionValue.toFixed(2),
-        effectiveLeverage: HYPERLIQUID_DEFAULT_LEVERAGE
-      });
+    // Try to detect actual leverage from existing position
+    if (state.currentSize > 0 && state.totalMarginUsed > 0) {
+      const estimatedPositionValue = state.currentSize * state.averageEntryPrice;
+      actualLeverage = Math.round(estimatedPositionValue / state.totalMarginUsed);
+      logger.info(`📊 Detected existing leverage: ${actualLeverage}x from current position`);
     } else {
-      // For subsequent levels, use the same approach
-      positionValue = marginToUse * HYPERLIQUID_DEFAULT_LEVERAGE;
+      // Check if there's an existing position we can read leverage from
+      try {
+        const positions = await this.hyperliquidClient!.getPositions();
+        const existingPosition = positions.find(p => p.coin === signal.symbol);
+        if (existingPosition && parseFloat(existingPosition.szi || '0') > 0) {
+          // The leverage can be inferred from margin used vs position value
+          const size = Math.abs(parseFloat(existingPosition.szi || '0'));
+          const entry = parseFloat(existingPosition.entryPx || '0');
+          const marginUsed = parseFloat(existingPosition.marginUsed || '0');
+          if (marginUsed > 0) {
+            actualLeverage = Math.round((size * entry) / marginUsed);
+            logger.info(`📊 Detected leverage from Hyperliquid position: ${actualLeverage}x`);
+          }
+        }
+      } catch (error) {
+        logger.warn('Could not detect leverage from existing position, using 10x default');
+      }
     }
+
+    // Calculate position value based on actual leverage
+    const positionValue = marginToUse * actualLeverage;
+
+    logger.info(`💰 Position sizing with existing leverage`, {
+      targetMargin: marginToUse.toFixed(2),
+      detectedLeverage: actualLeverage,
+      positionValue: positionValue.toFixed(2)
+    });
 
     // Get current market price
     const currentPrice = await this.safeGetMarketPrice(signal.symbol);
@@ -471,12 +475,11 @@ export class PyramidTradingEngine {
       accountValue: accountValue.toFixed(2),
       marginPercentage: `${marginPercentage}%`,
       marginToUse: marginToUse.toFixed(2),
-      accountLeverage: `${HYPERLIQUID_DEFAULT_LEVERAGE}x (Hyperliquid default)`,
-      targetLeverage: `${this.config.fixedLeverage}x (configured)`,
+      actualLeverage: `${actualLeverage}x (detected from position)`,
       positionValue: positionValue.toFixed(2),
       currentPrice: currentPrice.toFixed(2),
       size: sizeInAsset.toFixed(2),
-      expectedMarginUsage: `$${(positionValue / HYPERLIQUID_DEFAULT_LEVERAGE).toFixed(2)}`
+      expectedMarginUsage: `$${(positionValue / actualLeverage).toFixed(2)}`
     });
 
     // Place order with proper tick size
