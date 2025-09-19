@@ -353,6 +353,11 @@ export class PyramidTradingEngine {
       const currentSize = Math.abs(parseFloat(hlPosition.szi));
       const state = this.getPyramidState(symbol);
 
+      // Check if position has changed before updating
+      const hasChanged = Math.abs((state.lastSyncedSize || 0) - currentSize) > 0.01;
+      const hlEntry = parseFloat(hlPosition.entryPx || '0');
+      const entryChanged = hlEntry > 0 && (!state.averageEntryPrice || Math.abs(state.averageEntryPrice - hlEntry) > 0.01);
+
       // Update state with actual Hyperliquid data
       state.currentSize = currentSize;
       state.totalSize = currentSize;
@@ -360,15 +365,18 @@ export class PyramidTradingEngine {
       state.lastSyncTime = new Date();
 
       // Only update average entry if we don't have it or it's significantly different
-      const hlEntry = parseFloat(hlPosition.entryPx || '0');
-      if (hlEntry > 0 && (!state.averageEntryPrice || Math.abs(state.averageEntryPrice - hlEntry) > 0.01)) {
+      if (hlEntry > 0 && entryChanged) {
         state.averageEntryPrice = hlEntry;
       }
 
-      logger.info(`📡 Synced ${symbol} with Hyperliquid`, {
-        size: currentSize.toFixed(2),
-        entry: state.averageEntryPrice?.toFixed(2) || 'N/A'
-      });
+      // Only log if position has actually changed
+      if (hasChanged || entryChanged) {
+        logger.info(`📡 Position updated for ${symbol}`, {
+          size: currentSize.toFixed(2),
+          entry: state.averageEntryPrice?.toFixed(2) || 'N/A',
+          change: hasChanged ? 'size' : 'entry'
+        });
+      }
     } catch (error) {
       logger.error(`Failed to sync ${symbol} with Hyperliquid`, error);
     }
@@ -816,7 +824,7 @@ export class PyramidTradingEngine {
       } catch (error) {
         logger.error('Error monitoring positions', error);
       }
-    }, 5000); // Check every 5 seconds
+    }, 30000); // Check every 30 seconds
   }
 
   /**
