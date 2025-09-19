@@ -11,7 +11,7 @@ export interface PyramidConfig {
   // Pyramid settings
   marginPercentages: number[];   // [10, 15, 20, 25] - % of account to use as margin
   exitPercentages: number[];     // [50, 100] - Simplified: 50% first sell, 100% second sell
-  fixedLeverage: number;         // 5 - Fixed leverage for all positions
+  fixedLeverage: number;         // 10 - Fixed leverage for all positions
 
   // Risk management
   maxPyramidLevels: number;      // 4
@@ -75,17 +75,17 @@ export class PyramidTradingEngine {
       moderate: {
         marginPercentages: [10, 15, 20, 25],  // Total: 70% of account
         exitPercentages: [50, 100],           // SIMPLIFIED: 50% then 100%
-        fixedLeverage: 5
+        fixedLeverage: 10
       },
       conservative: {
         marginPercentages: [5, 10, 15, 20],   // Total: 50% of account
         exitPercentages: [50, 100],
-        fixedLeverage: 5
+        fixedLeverage: 10
       },
       aggressive: {
         marginPercentages: [15, 20, 25, 30],  // Total: 90% of account
         exitPercentages: [50, 100],
-        fixedLeverage: 5
+        fixedLeverage: 10
       }
     };
 
@@ -411,41 +411,15 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // CRITICAL: Use existing position's leverage instead of trying to change it
-    // Hyperliquid doesn't allow mixed leverage on the same symbol
-    let actualLeverage = 10; // Default to 10x if we can't detect
+    // Use fixed 10x leverage to match existing positions
+    const actualLeverage = 10;
 
-    // Try to detect actual leverage from existing position
-    if (state.currentSize > 0 && state.totalMarginUsed > 0) {
-      const estimatedPositionValue = state.currentSize * state.averageEntryPrice;
-      actualLeverage = Math.round(estimatedPositionValue / state.totalMarginUsed);
-      logger.info(`📊 Detected existing leverage: ${actualLeverage}x from current position`);
-    } else {
-      // Check if there's an existing position we can read leverage from
-      try {
-        const positions = await this.hyperliquidClient!.getPositions();
-        const existingPosition = positions.find(p => p.coin === signal.symbol);
-        if (existingPosition && parseFloat(existingPosition.szi || '0') > 0) {
-          // The leverage can be inferred from margin used vs position value
-          const size = Math.abs(parseFloat(existingPosition.szi || '0'));
-          const entry = parseFloat(existingPosition.entryPx || '0');
-          const marginUsed = parseFloat(existingPosition.marginUsed || '0');
-          if (marginUsed > 0) {
-            actualLeverage = Math.round((size * entry) / marginUsed);
-            logger.info(`📊 Detected leverage from Hyperliquid position: ${actualLeverage}x`);
-          }
-        }
-      } catch (error) {
-        logger.warn('Could not detect leverage from existing position, using 10x default');
-      }
-    }
-
-    // Calculate position value based on actual leverage
+    // Calculate position value based on 10x leverage
     const positionValue = marginToUse * actualLeverage;
 
-    logger.info(`💰 Position sizing with existing leverage`, {
+    logger.info(`💰 Position sizing with 10x leverage`, {
       targetMargin: marginToUse.toFixed(2),
-      detectedLeverage: actualLeverage,
+      leverage: actualLeverage,
       positionValue: positionValue.toFixed(2)
     });
 
@@ -465,10 +439,19 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // TEMPORARILY SKIP LEVERAGE SETTING - API issue with "Unknown asset: 5"
-    // The account already has positions at the correct leverage
-    // TODO: Fix the setLeverage API call format
-    logger.info(`⚠️ Skipping leverage setting (API issue) - proceeding with position at account default leverage`);
+    // Set leverage to 10x to match existing position
+    try {
+      logger.info(`⚙️ Setting leverage to 10x for ${signal.symbol} to match existing position`);
+      await this.hyperliquidClient!.setLeverage(
+        signal.symbol,
+        'cross', // Use cross margin for pyramiding
+        10 // Match existing position leverage
+      );
+      logger.info(`✅ Leverage set to 10x`);
+    } catch (error: any) {
+      // Log but don't fail - if position already exists at 10x, this is fine
+      logger.warn(`Could not set leverage (may already be set): ${error.message}`);
+    }
 
     logger.info(`📈 Adding pyramid level ${state.currentLevel + 1}`, {
       symbol: signal.symbol,
