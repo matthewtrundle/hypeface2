@@ -11,7 +11,7 @@ export interface PyramidConfig {
   // Pyramid settings
   marginPercentages: number[];   // [10, 15, 20, 25] - % of account to use as margin
   exitPercentages: number[];     // [50, 100] - Simplified: 50% first sell, 100% second sell
-  fixedLeverage: number;         // 10 - Fixed leverage for all positions
+  fixedLeverage: number;         // 3 - Fixed leverage for all positions (SAFER)
 
   // Risk management
   maxPyramidLevels: number;      // 4
@@ -22,10 +22,12 @@ export interface PyramidConfig {
   // Position tracking
   resetAfterFullExit: boolean;   // true
   enablePyramiding: boolean;     // true
+  enableBidirectional: boolean;  // true - Allow both longs and shorts
 }
 
 interface PyramidState {
   symbol: string;
+  side: 'long' | 'short' | null;  // Track current position side
   currentLevel: number;       // 0-3, which pyramid level we're at
   exitCount: number;          // Track number of exits (0, 1, or 2)
   totalSize: number;          // Total position size
@@ -70,22 +72,22 @@ export class PyramidTradingEngine {
     // Load pyramid configuration with SIMPLIFIED exit strategy
     const pyramidStyle = process.env.PYRAMID_STYLE || 'moderate';
 
-    // Define preset configurations with FIXED leverage and SIMPLE exit strategy
+    // Define preset configurations with FIXED 3X LEVERAGE and SIMPLE exit strategy
     const presets = {
       moderate: {
         marginPercentages: [10, 15, 20, 25],  // Total: 70% of account
         exitPercentages: [50, 100],           // SIMPLIFIED: 50% then 100%
-        fixedLeverage: 10
+        fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       },
       conservative: {
         marginPercentages: [5, 10, 15, 20],   // Total: 50% of account
         exitPercentages: [50, 100],
-        fixedLeverage: 10
+        fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       },
       aggressive: {
         marginPercentages: [15, 20, 25, 30],  // Total: 90% of account
         exitPercentages: [50, 100],
-        fixedLeverage: 10
+        fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       }
     };
 
@@ -99,12 +101,15 @@ export class PyramidTradingEngine {
       stopLossPercentage: parseFloat(process.env.STOP_LOSS_PERCENTAGE || '10'),
       trailingStopPercentage: parseFloat(process.env.TRAILING_STOP_PERCENTAGE || '5'),
       resetAfterFullExit: process.env.RESET_AFTER_FULL_EXIT !== 'false',
-      enablePyramiding: process.env.ENABLE_PYRAMIDING !== 'false'
+      enablePyramiding: process.env.ENABLE_PYRAMIDING !== 'false',
+      enableBidirectional: process.env.ENABLE_BIDIRECTIONAL !== 'false'  // Default: enabled
     };
 
-    logger.info(`🚀 Pyramid Trading Engine (REFACTORED) initialized`, {
+    logger.info(`🚀 Pyramid Trading Engine (BIDIRECTIONAL) initialized`, {
       config: this.config,
-      version: this.healthCheckData.version
+      version: this.healthCheckData.version,
+      leverage: '3x (SAFER)',
+      mode: 'Bidirectional (Long & Short)'
     });
   }
 
@@ -164,8 +169,12 @@ export class PyramidTradingEngine {
           continue;
         }
 
+        // Determine side from Hyperliquid position (positive = long, negative = short)
+        const positionSide: 'long' | 'short' = parseFloat(hlPosition.szi) > 0 ? 'long' : 'short';
+
         const state: PyramidState = {
           symbol,
+          side: positionSide,  // Track the side
           currentLevel: 1,
           entryCount: 1,
           exitCount: 0,
@@ -239,11 +248,11 @@ export class PyramidTradingEngine {
 
     await this.hyperliquidClient.initialize();
 
-    // Set default leverage for common trading pairs
-    // This is critical for ensuring positions use correct margin
+    // Set default leverage for trading pairs
+    // CRITICAL: Using 3x leverage for safety (both SOL-PERP and FARTCOIN)
     try {
-      const defaultLeverage = this.config.fixedLeverage;
-      const tradingPairs = ['SOL-PERP', 'BTC-PERP', 'ETH-PERP'];
+      const defaultLeverage = this.config.fixedLeverage;  // 3x
+      const tradingPairs = ['SOL-PERP', 'FARTCOIN'];  // Our two trading pairs
 
       logger.info(`🔧 Setting default leverage to ${defaultLeverage}x for all pairs...`);
 
@@ -383,9 +392,186 @@ export class PyramidTradingEngine {
   }
 
   /**
-   * Handle buy signal with improved validation
+   * Handle buy signal with BIDIRECTIONAL support
    */
   private async handleBuySignal(
+    signal: TradingSignal,
+    userId: string,
+    state: PyramidState
+  ): Promise<void> {
+    // BIDIRECTIONAL LOGIC: Check if we have an opposite position (short)
+    if (state.side === 'short' && state.isActive) {
+      logger.info(`🔄 BUY signal received while SHORT position exists - closing short first`);
+      await this.closeEntirePosition(signal.symbol, userId, state);
+      // Reset state after closing
+      state.side = null;
+      state.currentLevel = 0;
+      state.entryCount = 0;
+      state.exitCount = 0;
+      state.isActive = false;
+      state.positions = [];
+      return; // Exit - next BUY signal will open long
+    }
+
+    // Check if we can add more pyramid levels
+    if (state.currentLevel >= this.config.maxPyramidLevels) {
+      logger.info(`Max pyramid level (${this.config.maxPyramidLevels}) reached for ${signal.symbol}`);
+      return;
+    }
+
+    // Get account balance with null check
+    const accountValue = await this.safeGetAccountValue();
+    if (!accountValue || accountValue < 100) {
+      logger.error('Insufficient account balance', { accountValue });
+      throw new Error('Insufficient account balance');
+    }
+
+    // Calculate margin to use
+    const marginPercentage = this.config.marginPercentages[state.currentLevel] || 10;
+    const marginToUse = accountValue * (marginPercentage / 100);
+
+    // Check max exposure
+    const newTotalMargin = (state.totalMarginUsed || 0) + marginToUse;
+    if (newTotalMargin > (accountValue * this.config.maxAccountExposure)) {
+      logger.warn(`Would exceed max exposure`, {
+        current: state.totalMarginUsed || 0,
+        new: marginToUse,
+        total: newTotalMargin,
+        max: accountValue * this.config.maxAccountExposure
+      });
+      return;
+    }
+
+    // Use fixed 3x leverage for safety
+    const actualLeverage = this.config.fixedLeverage;  // 3x
+
+    // Calculate position value based on 3x leverage
+    const positionValue = marginToUse * actualLeverage;
+
+    logger.info(`💰 Position sizing with ${actualLeverage}x leverage (SAFER)`, {
+      targetMargin: marginToUse.toFixed(2),
+      leverage: actualLeverage,
+      positionValue: positionValue.toFixed(2)
+    });
+
+    // Get current market price
+    const currentPrice = await this.safeGetMarketPrice(signal.symbol);
+    if (!currentPrice || currentPrice <= 0) {
+      logger.error('Invalid market price', { symbol: signal.symbol, price: currentPrice });
+      throw new Error('Cannot get valid market price');
+    }
+
+    // Calculate size with proper rounding
+    const rawSize = positionValue / currentPrice;
+    const sizeInAsset = Math.floor(rawSize * 100) / 100; // Round down to 2 decimals
+
+    if (sizeInAsset < 0.01) {
+      logger.warn('Position size too small', { size: sizeInAsset });
+      return;
+    }
+
+    // Set leverage to 3x for safety
+    try {
+      logger.info(`⚙️ Setting leverage to ${actualLeverage}x for ${signal.symbol} (SAFER)`);
+      await this.hyperliquidClient!.setLeverage(
+        signal.symbol,
+        'cross', // Use cross margin for pyramiding
+        actualLeverage // 3x leverage
+      );
+      logger.info(`✅ Leverage set to ${actualLeverage}x`);
+    } catch (error: any) {
+      // Log but don't fail - if position already exists at 3x, this is fine
+      logger.warn(`Could not set leverage (may already be set): ${error.message}`);
+    }
+
+    logger.info(`📈 Adding LONG pyramid level ${state.currentLevel + 1}`, {
+      symbol: signal.symbol,
+      side: 'LONG',
+      accountValue: accountValue.toFixed(2),
+      marginPercentage: `${marginPercentage}%`,
+      marginToUse: marginToUse.toFixed(2),
+      actualLeverage: `${actualLeverage}x`,
+      positionValue: positionValue.toFixed(2),
+      currentPrice: currentPrice.toFixed(2),
+      size: sizeInAsset.toFixed(2),
+      expectedMarginUsage: `$${(positionValue / actualLeverage).toFixed(2)}`
+    });
+
+    // Place order with proper tick size
+    const tickSize = 0.05; // SOL-PERP tick size
+    const limitPrice = Math.round((currentPrice * 1.001) / tickSize) * tickSize;
+
+    const orderRequest: OrderRequest = {
+      coin: signal.symbol,
+      is_buy: true,
+      sz: sizeInAsset,
+      limit_px: limitPrice,
+      order_type: 'limit',
+      reduce_only: false
+    };
+
+    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+
+    if (orderResult.status !== 'ok') {
+      throw new Error(`Order failed: ${orderResult.error}`);
+    }
+
+    logger.info('✅ LONG order placed successfully', { orderResult });
+
+    // Update pyramid state
+    state.side = 'long';  // Set side to long
+    state.positions.push({
+      size: sizeInAsset,
+      entry: currentPrice,
+      marginUsed: marginToUse,
+      timestamp: new Date()
+    });
+    state.currentLevel++;
+    state.entryCount++;
+    state.totalSize = (state.totalSize || 0) + sizeInAsset;
+    state.currentSize = state.totalSize;
+    state.totalMarginUsed = (state.totalMarginUsed || 0) + marginToUse;
+    state.isActive = true;
+    state.averageEntryPrice = this.calculateAverageEntry(state.positions);
+
+    // Store in database
+    await this.updatePositionInDatabase(userId, signal.symbol, state);
+  }
+
+  /**
+   * Handle sell signal with BIDIRECTIONAL support
+   */
+  private async handleSellSignal(
+    signal: TradingSignal,
+    userId: string,
+    state: PyramidState
+  ): Promise<void> {
+    // BIDIRECTIONAL LOGIC: Check if we have an opposite position (long)
+    if (state.side === 'long' && state.isActive) {
+      logger.info(`🔄 SELL signal received while LONG position exists - closing long first`);
+      await this.closeEntirePosition(signal.symbol, userId, state);
+      // Reset state after closing
+      state.side = null;
+      state.currentLevel = 0;
+      state.entryCount = 0;
+      state.exitCount = 0;
+      state.isActive = false;
+      state.positions = [];
+      return; // Exit - next SELL signal will open short
+    }
+
+    // If no position or position is already short, add to short position
+    if (state.side === null || state.side === 'short') {
+      // Open or add to short position
+      await this.handleShortEntry(signal, userId, state);
+      return;
+    }
+  }
+
+  /**
+   * Handle SHORT entry (opening or adding to short position)
+   */
+  private async handleShortEntry(
     signal: TradingSignal,
     userId: string,
     state: PyramidState
@@ -419,13 +605,13 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // Use fixed 10x leverage to match existing positions
-    const actualLeverage = 10;
+    // Use fixed 3x leverage for safety
+    const actualLeverage = this.config.fixedLeverage;  // 3x
 
-    // Calculate position value based on 10x leverage
+    // Calculate position value based on 3x leverage
     const positionValue = marginToUse * actualLeverage;
 
-    logger.info(`💰 Position sizing with 10x leverage`, {
+    logger.info(`💰 SHORT Position sizing with ${actualLeverage}x leverage (SAFER)`, {
       targetMargin: marginToUse.toFixed(2),
       leverage: actualLeverage,
       positionValue: positionValue.toFixed(2)
@@ -447,43 +633,44 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // Set leverage to 10x to match existing position
+    // Set leverage to 3x for safety
     try {
-      logger.info(`⚙️ Setting leverage to 10x for ${signal.symbol} to match existing position`);
+      logger.info(`⚙️ Setting leverage to ${actualLeverage}x for ${signal.symbol} (SAFER)`);
       await this.hyperliquidClient!.setLeverage(
         signal.symbol,
         'cross', // Use cross margin for pyramiding
-        10 // Match existing position leverage
+        actualLeverage // 3x leverage
       );
-      logger.info(`✅ Leverage set to 10x`);
+      logger.info(`✅ Leverage set to ${actualLeverage}x`);
     } catch (error: any) {
-      // Log but don't fail - if position already exists at 10x, this is fine
+      // Log but don't fail - if position already exists at 3x, this is fine
       logger.warn(`Could not set leverage (may already be set): ${error.message}`);
     }
 
-    logger.info(`📈 Adding pyramid level ${state.currentLevel + 1}`, {
+    logger.info(`📉 Adding SHORT pyramid level ${state.currentLevel + 1}`, {
       symbol: signal.symbol,
+      side: 'SHORT',
       accountValue: accountValue.toFixed(2),
       marginPercentage: `${marginPercentage}%`,
       marginToUse: marginToUse.toFixed(2),
-      actualLeverage: `${actualLeverage}x (detected from position)`,
+      actualLeverage: `${actualLeverage}x`,
       positionValue: positionValue.toFixed(2),
       currentPrice: currentPrice.toFixed(2),
       size: sizeInAsset.toFixed(2),
       expectedMarginUsage: `$${(positionValue / actualLeverage).toFixed(2)}`
     });
 
-    // Place order with proper tick size
-    const tickSize = 0.05; // SOL-PERP tick size
-    const limitPrice = Math.round((currentPrice * 1.001) / tickSize) * tickSize;
+    // Place SHORT order (sell to open short)
+    const tickSize = 0.05; // Tick size for perps
+    const limitPrice = Math.round((currentPrice * 0.999) / tickSize) * tickSize;
 
     const orderRequest: OrderRequest = {
       coin: signal.symbol,
-      is_buy: true,
+      is_buy: false,  // SELL to open short
       sz: sizeInAsset,
       limit_px: limitPrice,
       order_type: 'limit',
-      reduce_only: false
+      reduce_only: false  // Opening position, not reducing
     };
 
     const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
@@ -492,9 +679,10 @@ export class PyramidTradingEngine {
       throw new Error(`Order failed: ${orderResult.error}`);
     }
 
-    logger.info('✅ Buy order placed successfully', { orderResult });
+    logger.info('✅ SHORT order placed successfully', { orderResult });
 
     // Update pyramid state
+    state.side = 'short';  // Set side to short
     state.positions.push({
       size: sizeInAsset,
       entry: currentPrice,
@@ -514,19 +702,19 @@ export class PyramidTradingEngine {
   }
 
   /**
-   * Handle sell signal with SIMPLIFIED 50%/100% strategy
+   * Close entire position (used when flipping from long to short or vice versa)
    */
-  private async handleSellSignal(
-    signal: TradingSignal,
+  private async closeEntirePosition(
+    symbol: string,
     userId: string,
     state: PyramidState
   ): Promise<void> {
     // Always check Hyperliquid for actual position
     const positions = await this.hyperliquidClient!.getPositions();
-    const hlPosition = positions.find(p => p.coin === signal.symbol);
+    const hlPosition = positions.find(p => p.coin === symbol);
 
     if (!hlPosition || Math.abs(parseFloat(hlPosition.szi || '0')) < 0.01) {
-      logger.info(`No position on Hyperliquid for ${signal.symbol}`);
+      logger.info(`No position on Hyperliquid for ${symbol}`);
       // Reset state
       state.currentSize = 0;
       state.exitCount = 0;
@@ -536,79 +724,57 @@ export class PyramidTradingEngine {
 
     const currentSize = Math.abs(parseFloat(hlPosition.szi));
     const entryPrice = parseFloat(hlPosition.entryPx || '0');
+    const positionSzi = parseFloat(hlPosition.szi);
 
-    logger.info(`📉 Processing SELL for ${signal.symbol}`, {
-      currentSize: currentSize ? currentSize.toFixed(2) : '0',
-      entryPrice: entryPrice ? entryPrice.toFixed(2) : '0',
-      exitCount: state.exitCount
+    logger.info(`🔻 Closing ENTIRE ${state.side?.toUpperCase()} position for ${symbol}`, {
+      side: state.side,
+      currentSize: currentSize.toFixed(2),
+      entryPrice: entryPrice.toFixed(2)
     });
 
-    // SIMPLIFIED STRATEGY: First sell = 50%, Second sell = 100%
-    let exitSize: number;
-
-    if (state.exitCount === 0) {
-      // First sell: 50% of position
-      exitSize = Math.floor((currentSize * 0.5) * 100) / 100;
-      logger.info('🔸 First sell signal - selling 50%', {
-        currentSize: currentSize ? currentSize.toFixed(2) : '0',
-        exitSize: exitSize ? exitSize.toFixed(2) : '0'
-      });
-    } else {
-      // Second or subsequent sell: close entire position
-      exitSize = currentSize;
-      logger.info('🔸 Final sell signal - closing entire position', {
-        exitSize: exitSize ? exitSize.toFixed(2) : '0'
-      });
-    }
-
-    if (exitSize < 0.01) {
-      logger.warn('Exit size too small', { exitSize });
+    if (currentSize < 0.01) {
+      logger.warn('Exit size too small', { currentSize });
       return;
     }
 
-    // Place market order to reduce position
+    // Determine if we need to buy or sell to close
+    // For long positions (szi > 0): SELL to close
+    // For short positions (szi < 0): BUY to close
+    const isBuyToClose = positionSzi < 0;  // Buy to close short
+
+    // Place market order to close entire position
     const orderRequest: OrderRequest = {
-      coin: signal.symbol,
-      is_buy: false,
-      sz: exitSize,
+      coin: symbol,
+      is_buy: isBuyToClose,
+      sz: currentSize,
       order_type: 'market',
       reduce_only: true
     };
 
-    logger.info('Placing SELL order', orderRequest);
+    logger.info(`Placing ${isBuyToClose ? 'BUY' : 'SELL'} order to close ${state.side}`, orderRequest);
 
     const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
 
     if (orderResult.status !== 'ok') {
-      throw new Error(`Sell order failed: ${orderResult.error}`);
+      throw new Error(`Close order failed: ${orderResult.error}`);
     }
 
-    logger.info('✅ SELL order executed', {
-      symbol: signal.symbol,
-      exitSize: exitSize ? exitSize.toFixed(2) : '0',
-      exitCount: state.exitCount + 1
+    logger.info(`✅ Position CLOSED for ${symbol}`, {
+      side: state.side,
+      size: currentSize.toFixed(2)
     });
 
-    // Update state
-    state.exitCount++;
-    state.currentSize = Math.max(0, currentSize - exitSize);
+    // Reset state completely
+    state.currentSize = 0;
+    state.isActive = false;
+    state.exitCount = 0;
+    state.currentLevel = 0;
+    state.entryCount = 0;
+    state.positions = [];
+    state.side = null;
 
-    // If position is essentially closed, reset state
-    if (state.currentSize < 0.01) {
-      logger.info(`Position closed for ${signal.symbol}`);
-      state.currentSize = 0;
-      state.isActive = false;
-      state.exitCount = 0;
-      state.currentLevel = 0;
-      state.entryCount = 0;
-      state.positions = [];
-
-      // Mark as closed in database
-      await this.closePositionInDatabase(userId, signal.symbol);
-    } else {
-      // Update database with reduced position
-      await this.updatePositionInDatabase(userId, signal.symbol, state);
-    }
+    // Mark as closed in database
+    await this.closePositionInDatabase(userId, symbol);
   }
 
   /**
@@ -652,6 +818,7 @@ export class PyramidTradingEngine {
     if (!this.pyramidStates.has(symbol)) {
       this.pyramidStates.set(symbol, {
         symbol,
+        side: null,  // Initialize with no side
         currentLevel: 0,
         entryCount: 0,
         exitCount: 0,
@@ -723,7 +890,7 @@ export class PyramidTradingEngine {
             userId,
             walletId: wallet.id,
             symbol,
-            side: 'long',
+            side: state.side || 'long',  // Use actual side from state
             status: 'open',
             ...positionData
           }
