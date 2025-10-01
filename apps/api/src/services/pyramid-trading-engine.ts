@@ -159,8 +159,8 @@ export class PyramidTradingEngine {
         const symbol = hlPosition.coin;
         const avgEntry = parseFloat(hlPosition.entryPx || '0');
 
-        // Validate entry price
-        if (avgEntry < 1 || avgEntry > 1000000 || isNaN(avgEntry)) {
+        // Validate entry price (allow low-priced assets like FARTCOIN)
+        if (avgEntry <= 0 || avgEntry > 1000000 || isNaN(avgEntry)) {
           logger.warn(`Invalid position data for ${symbol}`, {
             size,
             avgEntry,
