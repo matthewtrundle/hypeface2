@@ -249,10 +249,10 @@ export class PyramidTradingEngine {
     await this.hyperliquidClient.initialize();
 
     // Set default leverage for trading pairs
-    // CRITICAL: Using 3x leverage for safety (both SOL-PERP and FARTCOIN)
+    // CRITICAL: Using 3x leverage for safety (both SOL-PERP and FARTCOIN-PERP)
     try {
       const defaultLeverage = this.config.fixedLeverage;  // 3x
-      const tradingPairs = ['SOL-PERP', 'FARTCOIN'];  // Our two trading pairs
+      const tradingPairs = ['SOL-PERP', 'FARTCOIN-PERP'];  // Our two trading pairs
 
       logger.info(`🔧 Setting default leverage to ${defaultLeverage}x for all pairs...`);
 
