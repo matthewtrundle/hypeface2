@@ -132,12 +132,22 @@ export class HyperliquidClient {
     try {
       logger.info(`Setting leverage for ${coin}`, { leverageMode, leverage });
 
+      // Get asset index from meta endpoint
+      const meta = await this.client.info.perpetuals.getMeta();
+      const assetIndex = meta.universe.findIndex((asset: any) => asset.name === coin);
+
+      if (assetIndex === -1) {
+        throw new Error(`Asset ${coin} not found in universe`);
+      }
+
+      logger.info(`Found asset index for ${coin}`, { assetIndex });
+
       // The Hyperliquid SDK updateLeverage method signature:
-      // updateLeverage(leverage: number, coin: string, is_cross: boolean)
+      // updateLeverage(asset: number, isCross: boolean, leverage: number)
       const updateLeverageResult = await (this.client.exchange as any).updateLeverage(
-        leverage,                     // leverage amount (e.g., 5 for 5x)
-        coin,                        // coin symbol (e.g., 'SOL-PERP')
-        leverageMode === 'cross'     // is_cross: true for cross margin, false for isolated
+        assetIndex,                  // asset index (e.g., 0 for BTC, 1 for ETH)
+        leverageMode === 'cross',    // is_cross: true for cross margin, false for isolated
+        leverage                      // leverage amount (e.g., 5 for 5x)
       );
 
       logger.info('Leverage updated successfully', { result: updateLeverageResult });
