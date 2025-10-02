@@ -466,9 +466,14 @@ export class PyramidTradingEngine {
       throw new Error('Cannot get valid market price');
     }
 
-    // Calculate size with proper rounding
+    // Get asset metadata for proper size rounding
+    const assetInfo = await this.hyperliquidClient!.getAssetInfo(signal.symbol);
+    const szDecimals = assetInfo.szDecimals || 0;
+
+    // Calculate size with proper rounding based on asset's szDecimals
     const rawSize = positionValue / currentPrice;
-    const sizeInAsset = Math.floor(rawSize * 100) / 100; // Round down to 2 decimals
+    const multiplier = Math.pow(10, szDecimals);
+    const sizeInAsset = Math.floor(rawSize * multiplier) / multiplier;
 
     if (sizeInAsset < 0.01) {
       logger.warn('Position size too small', { size: sizeInAsset });
@@ -498,7 +503,8 @@ export class PyramidTradingEngine {
       actualLeverage: `${actualLeverage}x`,
       positionValue: positionValue.toFixed(2),
       currentPrice: currentPrice.toFixed(2),
-      size: sizeInAsset.toFixed(2),
+      size: sizeInAsset,
+      szDecimals,
       expectedMarginUsage: `$${(positionValue / actualLeverage).toFixed(2)}`
     });
 
@@ -629,9 +635,14 @@ export class PyramidTradingEngine {
       throw new Error('Cannot get valid market price');
     }
 
-    // Calculate size with proper rounding
+    // Get asset metadata for proper size rounding
+    const assetInfo = await this.hyperliquidClient!.getAssetInfo(signal.symbol);
+    const szDecimals = assetInfo.szDecimals || 0;
+
+    // Calculate size with proper rounding based on asset's szDecimals
     const rawSize = positionValue / currentPrice;
-    const sizeInAsset = Math.floor(rawSize * 100) / 100; // Round down to 2 decimals
+    const multiplier = Math.pow(10, szDecimals);
+    const sizeInAsset = Math.floor(rawSize * multiplier) / multiplier;
 
     if (sizeInAsset < 0.01) {
       logger.warn('Position size too small', { size: sizeInAsset });
@@ -661,7 +672,8 @@ export class PyramidTradingEngine {
       actualLeverage: `${actualLeverage}x`,
       positionValue: positionValue.toFixed(2),
       currentPrice: currentPrice.toFixed(2),
-      size: sizeInAsset.toFixed(2),
+      size: sizeInAsset,
+      szDecimals,
       expectedMarginUsage: `$${(positionValue / actualLeverage).toFixed(2)}`
     });
 

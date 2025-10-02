@@ -333,6 +333,31 @@ export class HyperliquidClient {
     }
   }
 
+  async getAssetInfo(coin: string): Promise<any> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      const meta = await this.client.info.perpetuals.getMeta();
+      const assetInfo = meta.universe.find((asset: any) => asset.name === coin);
+
+      if (!assetInfo) {
+        throw new Error(`Asset ${coin} not found in universe`);
+      }
+
+      logger.info(`Asset info for ${coin}`, {
+        szDecimals: assetInfo.szDecimals,
+        maxLeverage: assetInfo.maxLeverage
+      });
+
+      return assetInfo;
+    } catch (error: any) {
+      logger.error('Failed to get asset info', { error: error.message, coin });
+      throw error;
+    }
+  }
+
   isReady(): boolean {
     return this.isInitialized;
   }
