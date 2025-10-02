@@ -406,7 +406,7 @@ export class PyramidTradingEngine {
   ): Promise<void> {
     // BIDIRECTIONAL LOGIC: Check if we have an opposite position (short)
     if (state.side === 'short' && state.isActive) {
-      logger.info(`🔄 BUY signal received while SHORT position exists - closing short first`);
+      logger.info(`🔄 BUY signal received while SHORT position exists - closing short and flipping to LONG`);
       await this.closeEntirePosition(signal.symbol, userId, state);
       // Reset state after closing
       state.side = null;
@@ -415,7 +415,7 @@ export class PyramidTradingEngine {
       state.exitCount = 0;
       state.isActive = false;
       state.positions = [];
-      return; // Exit - next BUY signal will open long
+      // Continue to open LONG position below (no return)
     }
 
     // Check if we can add more pyramid levels
@@ -559,7 +559,7 @@ export class PyramidTradingEngine {
   ): Promise<void> {
     // BIDIRECTIONAL LOGIC: Check if we have an opposite position (long)
     if (state.side === 'long' && state.isActive) {
-      logger.info(`🔄 SELL signal received while LONG position exists - closing long first`);
+      logger.info(`🔄 SELL signal received while LONG position exists - closing long and flipping to SHORT`);
       await this.closeEntirePosition(signal.symbol, userId, state);
       // Reset state after closing
       state.side = null;
@@ -568,7 +568,7 @@ export class PyramidTradingEngine {
       state.exitCount = 0;
       state.isActive = false;
       state.positions = [];
-      return; // Exit - next SELL signal will open short
+      // Continue to open SHORT position below (no return)
     }
 
     // If no position or position is already short, add to short position
