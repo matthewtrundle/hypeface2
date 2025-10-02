@@ -404,10 +404,17 @@ export class PyramidTradingEngine {
     userId: string,
     state: PyramidState
   ): Promise<void> {
+    let justFlipped = false;
+
     // BIDIRECTIONAL LOGIC: Check if we have an opposite position (short)
     if (state.side === 'short' && state.isActive) {
       logger.info(`🔄 BUY signal received while SHORT position exists - closing short and flipping to LONG`);
       await this.closeEntirePosition(signal.symbol, userId, state);
+
+      // Wait for margin to settle before opening opposite position
+      logger.info(`⏳ Waiting 2 seconds for margin settlement...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Reset state after closing
       state.side = null;
       state.currentLevel = 0;
@@ -415,6 +422,7 @@ export class PyramidTradingEngine {
       state.exitCount = 0;
       state.isActive = false;
       state.positions = [];
+      justFlipped = true;
       // Continue to open LONG position below (no return)
     }
 
@@ -424,10 +432,17 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // Get account balance with null check
-    const accountValue = await this.safeGetAccountValue();
+    // Get account balance - use available margin if we just flipped positions
+    let accountValue: number;
+    if (justFlipped) {
+      accountValue = await this.hyperliquidClient!.getAvailableMargin();
+      logger.info(`📊 Using available margin after flip: $${accountValue.toFixed(2)}`);
+    } else {
+      accountValue = await this.safeGetAccountValue();
+    }
+
     if (!accountValue || accountValue < 100) {
-      logger.error('Insufficient account balance', { accountValue });
+      logger.error('Insufficient account balance', { accountValue, justFlipped });
       throw new Error('Insufficient account balance');
     }
 
@@ -521,7 +536,7 @@ export class PyramidTradingEngine {
       reduce_only: false
     };
 
-    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+    const orderResult = await this.placeOrderWithRetry(orderRequest, 3);
 
     if (orderResult.status !== 'ok') {
       throw new Error(`Order failed: ${orderResult.error}`);
@@ -557,10 +572,17 @@ export class PyramidTradingEngine {
     userId: string,
     state: PyramidState
   ): Promise<void> {
+    let justFlipped = false;
+
     // BIDIRECTIONAL LOGIC: Check if we have an opposite position (long)
     if (state.side === 'long' && state.isActive) {
       logger.info(`🔄 SELL signal received while LONG position exists - closing long and flipping to SHORT`);
       await this.closeEntirePosition(signal.symbol, userId, state);
+
+      // Wait for margin to settle before opening opposite position
+      logger.info(`⏳ Waiting 2 seconds for margin settlement...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Reset state after closing
       state.side = null;
       state.currentLevel = 0;
@@ -568,13 +590,14 @@ export class PyramidTradingEngine {
       state.exitCount = 0;
       state.isActive = false;
       state.positions = [];
+      justFlipped = true;
       // Continue to open SHORT position below (no return)
     }
 
     // If no position or position is already short, add to short position
     if (state.side === null || state.side === 'short') {
       // Open or add to short position
-      await this.handleShortEntry(signal, userId, state);
+      await this.handleShortEntry(signal, userId, state, justFlipped);
       return;
     }
   }
@@ -585,7 +608,8 @@ export class PyramidTradingEngine {
   private async handleShortEntry(
     signal: TradingSignal,
     userId: string,
-    state: PyramidState
+    state: PyramidState,
+    justFlipped: boolean = false
   ): Promise<void> {
     // Check if we can add more pyramid levels
     if (state.currentLevel >= this.config.maxPyramidLevels) {
@@ -593,10 +617,17 @@ export class PyramidTradingEngine {
       return;
     }
 
-    // Get account balance with null check
-    const accountValue = await this.safeGetAccountValue();
+    // Get account balance - use available margin if we just flipped positions
+    let accountValue: number;
+    if (justFlipped) {
+      accountValue = await this.hyperliquidClient!.getAvailableMargin();
+      logger.info(`📊 Using available margin after flip: $${accountValue.toFixed(2)}`);
+    } else {
+      accountValue = await this.safeGetAccountValue();
+    }
+
     if (!accountValue || accountValue < 100) {
-      logger.error('Insufficient account balance', { accountValue });
+      logger.error('Insufficient account balance', { accountValue, justFlipped });
       throw new Error('Insufficient account balance');
     }
 
@@ -690,7 +721,7 @@ export class PyramidTradingEngine {
       reduce_only: false  // Opening position, not reducing
     };
 
-    const orderResult = await this.hyperliquidClient!.placeOrder(orderRequest);
+    const orderResult = await this.placeOrderWithRetry(orderRequest, 3);
 
     if (orderResult.status !== 'ok') {
       throw new Error(`Order failed: ${orderResult.error}`);
@@ -826,6 +857,71 @@ export class PyramidTradingEngine {
       logger.error(`Failed to get market price for ${symbol}`, error);
       return null;
     }
+  }
+
+  /**
+   * Place order with retry logic for margin-related failures
+   */
+  private async placeOrderWithRetry(
+    orderRequest: OrderRequest,
+    maxRetries: number = 3
+  ): Promise<OrderResponse> {
+    let lastError: string | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info(`📤 Placing order (attempt ${attempt}/${maxRetries})`, {
+          coin: orderRequest.coin,
+          is_buy: orderRequest.is_buy,
+          sz: orderRequest.sz
+        });
+
+        const result = await this.hyperliquidClient!.placeOrder(orderRequest);
+
+        // Check if order failed due to margin issues
+        if (result.status === 'error' && result.error) {
+          const errorMsg = result.error.toLowerCase();
+          const isMarginError =
+            errorMsg.includes('insufficient') ||
+            errorMsg.includes('margin') ||
+            errorMsg.includes('invalid size');
+
+          if (isMarginError && attempt < maxRetries) {
+            logger.warn(`⚠️ Margin-related error on attempt ${attempt}, retrying...`, {
+              error: result.error,
+              retryIn: '1 second'
+            });
+
+            // Wait 1 second before retry to allow margin to settle
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            lastError = result.error;
+            continue;
+          }
+        }
+
+        // Success or non-retryable error
+        return result;
+
+      } catch (error: any) {
+        logger.error(`Error placing order (attempt ${attempt}/${maxRetries})`, {
+          error: error.message,
+          willRetry: attempt < maxRetries
+        });
+
+        lastError = error.message;
+
+        if (attempt < maxRetries) {
+          // Wait 1 second before retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+
+    // All retries failed
+    return {
+      status: 'error',
+      error: lastError || 'Order failed after all retries'
+    };
   }
 
   /**

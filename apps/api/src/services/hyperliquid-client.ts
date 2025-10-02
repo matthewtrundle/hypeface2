@@ -99,6 +99,33 @@ export class HyperliquidClient {
     }
   }
 
+  async getAvailableMargin(): Promise<number> {
+    if (!this.isInitialized || !this.client) {
+      throw new Error('Hyperliquid client not initialized');
+    }
+
+    try {
+      const clearinghouseState = await this.client.info.perpetuals.getClearinghouseState(
+        this.wallet!.address
+      );
+
+      const accountValue = parseFloat(clearinghouseState.marginSummary.accountValue);
+      const totalMarginUsed = parseFloat(clearinghouseState.marginSummary.totalMarginUsed);
+      const availableMargin = accountValue - totalMarginUsed;
+
+      logger.info('💰 Available margin calculated', {
+        accountValue,
+        totalMarginUsed,
+        availableMargin
+      });
+
+      return Math.max(0, availableMargin);
+    } catch (error: any) {
+      logger.error('Failed to get available margin', { error: error.message });
+      throw error;
+    }
+  }
+
   async getPositions(): Promise<Position[]> {
     if (!this.isInitialized || !this.client) {
       throw new Error('Hyperliquid client not initialized');
