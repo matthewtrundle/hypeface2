@@ -18,7 +18,9 @@ export async function versionRoutes(app: FastifyInstance) {
       gitCommit,
       features: {
         pyramidTrading: true,
-        fixedLeverage: '5x',
+        fixedLeverage: '3x',
+        bidirectionalTrading: true,
+        pyramidStyle: process.env.PYRAMID_STYLE || 'moderate',
         sellStrategy: '50%/100%',
         toFixedIssue: 'FIXED'
       },
