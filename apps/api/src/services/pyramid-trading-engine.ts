@@ -85,7 +85,7 @@ export class PyramidTradingEngine {
         fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       },
       aggressive: {
-        marginPercentages: [15, 20, 25, 30],  // Total: 90% of account
+        marginPercentages: [30, 35, 40, 45],  // Total: 150% of account (YOLO mode)
         exitPercentages: [50, 100],
         fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       }
