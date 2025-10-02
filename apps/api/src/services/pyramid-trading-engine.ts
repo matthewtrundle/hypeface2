@@ -367,7 +367,12 @@ export class PyramidTradingEngine {
       const hlEntry = parseFloat(hlPosition.entryPx || '0');
       const entryChanged = hlEntry > 0 && (!state.averageEntryPrice || Math.abs(state.averageEntryPrice - hlEntry) > 0.01);
 
+      // Determine side from Hyperliquid position (positive = long, negative = short)
+      const positionSide: 'long' | 'short' = parseFloat(hlPosition.szi) > 0 ? 'long' : 'short';
+
       // Update state with actual Hyperliquid data
+      state.side = positionSide;
+      state.isActive = true;
       state.currentSize = currentSize;
       state.totalSize = currentSize;
       state.lastSyncedSize = currentSize;
