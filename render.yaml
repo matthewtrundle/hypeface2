@@ -1,10 +1,13 @@
 services:
   - type: web
-    name: hyperliquid-bot
+    name: hyperliquid-bot-api
     runtime: node
     repo: https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME
-    buildCommand: cd apps/api && npm install && npm run build && npx prisma generate
-    startCommand: cd apps/api && npx prisma migrate deploy && npm start
+    rootDir: apps/api
+    buildCommand: npm install && npm run build && npx prisma generate
+    startCommand: npx prisma migrate deploy && npm start
+    plan: starter
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -14,19 +17,28 @@ services:
           property: connectionString
       - key: REDIS_URL
         fromService:
-          type: redis
           name: hyperliquid-redis
           property: connectionString
       - key: PORT
         value: 3001
       - key: FRONTEND_URL
         value: https://YOUR_DASHBOARD_URL.onrender.com
-      # Add these via Render dashboard for security:
+      - key: PYRAMID_STYLE
+        value: aggressive
+      - key: MAX_PYRAMID_LEVELS
+        value: 4
+      - key: MAX_ACCOUNT_EXPOSURE
+        value: 0.55
+      - key: ENABLE_PYRAMIDING
+        value: true
+      - key: ENABLE_BIDIRECTIONAL
+        value: true
+      # Add these via Render dashboard for security (NEVER commit):
       # - JWT_SECRET
       # - MASTER_ENCRYPTION_KEY
       # - WEBHOOK_SECRET
-      # - WALLET_PRIVATE_KEY
-      # - HYPERLIQUID_API_URL
+      # - WALLET_PRIVATE_KEY (your actual private key)
+      # - HYPERLIQUID_API_URL (use https://api.hyperliquid-testnet.xyz for testnet)
 
 databases:
   - name: hyperliquid-db
@@ -34,7 +46,7 @@ databases:
     databaseName: hyperliquid
     user: hyperliquid
 
-services:
   - type: redis
     name: hyperliquid-redis
     plan: starter
+    maxmemoryPolicy: allkeys-lru

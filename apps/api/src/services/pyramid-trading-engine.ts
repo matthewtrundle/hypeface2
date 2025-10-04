@@ -3,7 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import Redis from 'ioredis';
 import { logger } from '../lib/logger';
 import { TradingSignal } from '../types';
-import { HyperliquidClient, OrderRequest, Position as HLPosition } from './hyperliquid-client';
+import { HyperliquidClient, OrderRequest, OrderResponse, Position as HLPosition } from './hyperliquid-client';
 import { WalletManager } from './wallet-manager';
 import { WebSocketService } from './websocket';
 
@@ -44,6 +44,8 @@ interface PyramidState {
   }>;
   lastSyncedSize?: number;    // Track last synced size from Hyperliquid
   lastSyncTime?: Date;        // Track last sync time
+  lastSignalTime?: Date;      // Track last signal time for cooldown (OPTION A)
+  lastSignalSide?: 'buy' | 'sell';  // Track last signal direction
 }
 
 export class PyramidTradingEngine {
@@ -85,7 +87,7 @@ export class PyramidTradingEngine {
         fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       },
       aggressive: {
-        marginPercentages: [30, 35, 40, 45],  // Total: 150% of account (YOLO mode)
+        marginPercentages: [10, 12, 15, 18],  // Total: 55% of account (SAFER - Option A)
         exitPercentages: [50, 100],
         fixedLeverage: 3  // REDUCED TO 3X FOR SAFETY
       }
@@ -295,6 +297,24 @@ export class PyramidTradingEngine {
       // Get or create pyramid state
       const state = this.getPyramidState(signal.symbol);
 
+      // OPTION A: Signal cooldown - ignore signals < 15 min apart in same direction
+      const now = new Date();
+      if (state.lastSignalTime && state.lastSignalSide === signal.action) {
+        const timeSinceLastSignal = (now.getTime() - state.lastSignalTime.getTime()) / 1000 / 60; // minutes
+        if (timeSinceLastSignal < 15) {
+          logger.info(`⏰ Signal cooldown active - ignoring ${signal.action} signal`, {
+            symbol: signal.symbol,
+            timeSinceLastSignal: timeSinceLastSignal.toFixed(1),
+            cooldownMinutes: 15
+          });
+          return;
+        }
+      }
+
+      // Update last signal tracking
+      state.lastSignalTime = now;
+      state.lastSignalSide = signal.action;
+
       if (signal.action === 'buy') {
         await this.handleBuySignal(signal, userId, state);
       } else if (signal.action === 'sell') {
@@ -411,9 +431,9 @@ export class PyramidTradingEngine {
       logger.info(`🔄 BUY signal received while SHORT position exists - closing short and flipping to LONG`);
       await this.closeEntirePosition(signal.symbol, userId, state);
 
-      // Wait for margin to settle before opening opposite position
-      logger.info(`⏳ Waiting 2 seconds for margin settlement...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for margin to settle before opening opposite position (OPTION A: increased to 10s)
+      logger.info(`⏳ Waiting 10 seconds for margin settlement...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
 
       // Reset state after closing
       state.side = null;
@@ -430,6 +450,27 @@ export class PyramidTradingEngine {
     if (state.currentLevel >= this.config.maxPyramidLevels) {
       logger.info(`Max pyramid level (${this.config.maxPyramidLevels}) reached for ${signal.symbol}`);
       return;
+    }
+
+    // OPTION A: Only pyramid if existing position is profitable (+0.5% or better)
+    if (state.currentLevel > 0 && state.averageEntryPrice > 0) {
+      const currentPrice = await this.safeGetMarketPrice(signal.symbol);
+      if (!currentPrice) {
+        logger.error('Cannot get market price for profit check');
+        return;
+      }
+      const profitPercentage = ((currentPrice - state.averageEntryPrice) / state.averageEntryPrice) * 100;
+      if (profitPercentage < 0.5) {
+        logger.info(`❌ Skipping LONG pyramid - position not profitable enough`, {
+          symbol: signal.symbol,
+          profitPercentage: profitPercentage.toFixed(2),
+          required: '0.5%'
+        });
+        return;
+      }
+      logger.info(`✅ Profit check passed - LONG pyramiding allowed`, {
+        profitPercentage: profitPercentage.toFixed(2)
+      });
     }
 
     // Get account balance - use available margin if we just flipped positions
@@ -579,9 +620,9 @@ export class PyramidTradingEngine {
       logger.info(`🔄 SELL signal received while LONG position exists - closing long and flipping to SHORT`);
       await this.closeEntirePosition(signal.symbol, userId, state);
 
-      // Wait for margin to settle before opening opposite position
-      logger.info(`⏳ Waiting 2 seconds for margin settlement...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for margin to settle before opening opposite position (OPTION A: increased to 10s)
+      logger.info(`⏳ Waiting 10 seconds for margin settlement...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
 
       // Reset state after closing
       state.side = null;
@@ -615,6 +656,29 @@ export class PyramidTradingEngine {
     if (state.currentLevel >= this.config.maxPyramidLevels) {
       logger.info(`Max pyramid level (${this.config.maxPyramidLevels}) reached for ${signal.symbol}`);
       return;
+    }
+
+    // OPTION A: Only pyramid if existing position is profitable (+0.5% or better)
+    // For SHORT positions, profit means price has DECREASED
+    if (state.currentLevel > 0 && state.averageEntryPrice > 0) {
+      const currentPrice = await this.safeGetMarketPrice(signal.symbol);
+      if (!currentPrice) {
+        logger.error('Cannot get market price for profit check');
+        return;
+      }
+      // For shorts, profit = negative price movement
+      const profitPercentage = ((state.averageEntryPrice - currentPrice) / state.averageEntryPrice) * 100;
+      if (profitPercentage < 0.5) {
+        logger.info(`❌ Skipping SHORT pyramid - position not profitable enough`, {
+          symbol: signal.symbol,
+          profitPercentage: profitPercentage.toFixed(2),
+          required: '0.5%'
+        });
+        return;
+      }
+      logger.info(`✅ Profit check passed - SHORT pyramiding allowed`, {
+        profitPercentage: profitPercentage.toFixed(2)
+      });
     }
 
     // Get account balance - use available margin if we just flipped positions
