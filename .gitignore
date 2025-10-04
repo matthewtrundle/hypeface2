@@ -53,3 +53,40 @@ wallets/
 *.pem
 seed.txt
 mnemonic.txt
+credentials.json
+secrets/
+.secrets
+
+# Wallet-related files
+wallet.json
+test-wallet.js
+*wallet*.txt
+*private*.txt
+*secret*.txt
+
+# Script outputs that may contain sensitive data
+*.wallet
+check-account.js
+check-detailed.js
+check-fills.js
+check-margin.js
+check-meta.js
+check-tick.js
+close-position.js
+direct-test.js
+final-test.js
+generate-wallet.js
+open-leveraged.js
+quick-check.js
+simple-check.js
+test-*.js
+check-*.js
+
+# Deployment configs with secrets
+railway.json
+.railway/
+
+# Analysis files (may contain trade data)
+analyze-*.js
+*-analysis.md
+DIAGNOSIS*.md
